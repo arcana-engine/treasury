@@ -107,7 +107,7 @@ With library API storing is done using `treasury_client::Client::store_asset` me
 
 Whole process can be described in four steps:
 1. User provides asset source, target format that will be used by end application and optionally source format. Source format required only if ambiguous.
-2. A registered that matches source and target formats runs and processes asset into artifact.
+2. A registered importer that matches source and target formats runs and processes asset into artifact.
 3. Treasury stores resulting artifact. It avoids storing duplicates though. Different assets may point to the same artifact.
 4. AssetId is returned.
 
