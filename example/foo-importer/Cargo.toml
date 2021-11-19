@@ -1,0 +1,12 @@
+[package]
+name = "foo-importer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+treasury-import = { path = "../../import" }
+serde_json = "1.0"

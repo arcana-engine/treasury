@@ -1,0 +1,23 @@
+[package]
+name = "treasury-client"
+version = "0.0.0"
+edition = "2021"
+authors = ["Zakarum <zakarumych@ya.ru>"]
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/treasury-client"
+homepage = "https://github.com/zakarumych/treasury"
+repository = "https://github.com/zakarumych/treasury"
+readme = "../README.md"
+keywords = ["assets", "gamedev"]
+categories = ["game-development"]
+
+[dependencies]
+treasury-api = { version = "0.0.0", path = "../api" }
+treasury-id = { version = "0.0.0", path = "../id" }
+
+url = { version = "2.2", features = ["serde"] }
+tracing = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+tokio = { version = "1.0", features = ["net", "io-util", "time"] }
+eyre = "0.6"

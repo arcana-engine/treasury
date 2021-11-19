@@ -1,0 +1,4 @@
+url = 'data:;base64,ewogICAgImZvbyI6ICJiYXIiCn0'
+[assets.foo.foo]
+id = 'bda27a2521d6461a'
+sha256 = 'bbe8e9a86be651f9efc8e8df7fb76999d8e9a4a9674df9be8de24f4fb3d872a2'

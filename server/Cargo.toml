@@ -1,0 +1,32 @@
+[package]
+name = "treasury-server"
+version = "0.0.0"
+edition = "2021"
+authors = ["Zakarum <zakarumych@ya.ru>"]
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/treasury-server"
+homepage = "https://github.com/zakarumych/treasury"
+repository = "https://github.com/zakarumych/treasury"
+readme = "../README.md"
+keywords = ["assets", "gamedev"]
+categories = ["game-development"]
+
+[dependencies]
+treasury-api = { version = "0.0.0", path = "../api" }
+treasury-store = { version = "0.0.0", path = "../store" }
+treasury-id = { version = "0.0.0", path = "../id" }
+
+url = { version = "2.2", features = ["serde"] }
+eyre = "0.6"
+color-eyre = "0.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+bincode = "1.0"
+tokio = { version = "1.0", features = ["macros", "net", "io-util", "rt-multi-thread", "time", "sync"] }
+envy = "0.4"
+futures-util = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-error = "0.2"
+pin-project = "1.0"
+parking_lot = "0.11"
