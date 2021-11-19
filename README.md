@@ -16,12 +16,12 @@ To start using Treasury an instance must be created.
 Treasury instance is defined by `Treasury.toml` file.
 Parent directory of the file is called "Base directory".
 
-This file can be created manually :construction_worker: or using methods below:\
+This file can be created manually :construction_worker: or using methods below:
 * CLI tool
   ```sh
   treasury init
   ```
-  will initialize Treasury instance using current directory as base.\
+  will initialize Treasury instance using current directory as base.
 
   ```sh
   treasury --base <path> init
@@ -29,6 +29,8 @@ This file can be created manually :construction_worker: or using methods below:\
   will initialize Treasury instance with base directory `<path>`.
 * Client library API provides method `Client::local`. With `init` argument set to `true` it will initialize Treasury. This is internally used by CLI call above.
 
+
+### :zap: Configuration :zap:
 
 Default `Treasury.toml` file looks like this
 ```toml
