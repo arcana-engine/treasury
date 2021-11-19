@@ -8,7 +8,7 @@
 
 Treasury is easy to use set of libraries and tools for creating asset pipelines for game engines or other applications.
 
-## Usage
+## :hand: Usage :hand:
 
 ### :zap: Initialization :zap:
 
@@ -16,47 +16,55 @@ To start using Treasury an instance must be created.
 Treasury instance is defined by `Treasury.toml` file.
 Parent directory of the file is called "Base directory".
 
-This file can be created manually or using methods below:\
-* CLI tool `treasury init` will initialize Treasury instance using current directory as base.\
-`treasury --base <path> init` will initialize Treasury instance with base directory `<path>`.
+This file can be created manually :construction_worker: or using methods below:\
+* CLI tool
+  ```sh
+  treasury init
+  ```
+  will initialize Treasury instance using current directory as base.\
+
+  ```sh
+  treasury --base <path> init
+  ```
+  will initialize Treasury instance with base directory `<path>`.
 * Client library API provides method `Client::local`. With `init` argument set to `true` it will initialize Treasury. This is internally used by CLI call above.
 
 
 Default `Treasury.toml` file looks like this
-```
+```toml
 ```
 :boom: Yes, empty file.
 
 
 There are four fields that can be overridden.
 
-1. ```
-   artifacts = "<path>"
-   ```
-   will override artifacts directory to specified path relative to `<base>`. Defaults to `<base>/treasury/artifacts`
+* ```toml
+  artifacts = "<path>"
+  ```
+  will override artifacts directory to specified path relative to `<base>`. Defaults to `<base>/treasury/artifacts`
 
-   Artifacts directory is where all artifacts are stored. This can and **SHOULD NOT** be covered by VCS. If path is inside repository then it should be ignored.
-   If Treasury creates artifacts directory (when storing an artifact and directory does not exist) it will create .gitignore file with "*".
+  Artifacts directory is where all artifacts are stored. This can and **SHOULD NOT** be covered by VCS. If path is inside repository then it should be ignored.
+  If Treasury creates artifacts directory (when storing an artifact and directory does not exist) it will create .gitignore file with "*".
 
-2. ```
-   external = "<path>"
-   ```
-   will override external directory to specified path relative to `<base>`. Defaults to `<base>/treasury/external`
+* ```toml
+  external = "<path>"
+  ```
+  will override external directory to specified path relative to `<base>`. Defaults to `<base>/treasury/external`
 
-   External directory is where all metadata files for remote assets are stored.
-   This directory **SHOULD** be in repository and not ignored by VCS.
+  External directory is where all metadata files for remote assets are stored.
+  This directory **SHOULD** be in repository and not ignored by VCS.
 
-3. ```
-   temp = "<path>"
-   ```
-   will override default directory for temporary files. Defaults to result of `std::env::temp_dir()`.
-   Temporary files are used as intermediate storage for sources downloaded for importers to consume and for importers output.
+* ```toml
+  temp = "<path>"
+  ```
+  will override default directory for temporary files. Defaults to result of `std::env::temp_dir()`.
+  Temporary files are used as intermediate storage for sources downloaded for importers to consume and for importers output.
 
-4. ```
-   importers = ["<list>", "<of>", "<paths>"]
-   ```
-   will tell what importer libraries that should be used for this instance.\
-   For Rust projects they will typically reside in target directory of the cargo workspace.
+* ```toml
+  importers = ["<list>", "<of>", "<paths>"]
+  ```
+  will tell what importer libraries that should be used for this instance.\
+  For Rust projects they will typically reside in target directory of the cargo workspace.
 
 Once initialized Treasury instance can be used to store and fetch assets.
 
@@ -65,7 +73,7 @@ Once initialized Treasury instance can be used to store and fetch assets.
 Storing assets in Treasury is straightforward.
 Using CLI took it looks like this
 
-```
+```sh
 treasury store <source-path> <target-format>
 ```
 
@@ -75,14 +83,14 @@ Otherwise error will be printed.
 
 If source format is ambiguous, it can be specified after target format
 
-```
+```sh
 treasury store <source-path> <target-format> <source-format>
 ```
 
 
 To store asset from URL use `--url` (short `-u`) flag.
 
-```
+```sh
 treasury store --url <source-url> <target-format> <source-format>
 ```
 
@@ -112,13 +120,59 @@ When asset sources migrate, .treasury file should come along. In this case reimp
 
 In order to store assets an importer is required to transform asset source :egg: into an artifact :baby_chick:.
 
-Importers are types that implement `treasury_import::Importer` traits.
+Importers are types that implement `treasury_import::Importer` traits.\
 Treasury can be configured to load importers from dynamic libraries.
 
-To simplify writing of such library and minimize problems that can arise from invalid implementation `treasury_import::make_treasury_importers_library` macro should be used.\
+To simplify writing importers libraries and minimize problems that can arise from invalid implementation `treasury_import::make_treasury_importers_library` macro should be used.\
 This macro will export all necessary symbols that are expected by server.
 It will ensure ABI compatibility using major version of `treasury_import` crate.
 The macro an code it generates will do all the unsafe ops, leaving author of importers library with simple and 100% safe Rust.
+
+
+Basic importer library may look like this
+
+```toml
+# Cargo.toml
+[package]
+name = "my-importer"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+treasury-import = { path = "../../import" }
+```
+
+```rust
+//! src/lib.rs
+struct MyImporter;
+
+impl treasury_import::Importer for MyImporter {
+    fn import(
+        &self,
+        source: &std::path::Path,
+        output: &std::path::Path,
+        _sources: &impl treasury_import::Sources,
+        _dependencies: &impl treasury_import::Dependencies,
+    ) -> Result<(), treasury_import::ImportError> {
+        match std::fs::copy(source, output) {
+          Ok(_) => Ok(()),
+          Err(err) => Err(treasury_import::ImporterError::Other { reason: "SOMETHING WENT WRONG".to_owned() }),
+        }
+    }
+}
+
+
+// Define all required exports.
+treasury_import::make_treasury_importers_library! {
+    // [extensions list]  <name> : <source-format> -> <target-format> = <expr>;
+    // <expr> must have type &'static I where I: Importer
+    // Use `Box::leak(importer)` if importer instance cannot be constructed in constant expression.
+    [foo] foo : foo -> foo = &FooImporter;
+}
+```
 
 Artifacts should always use `AssetId` to refer to dependencies.
 Asset source file can contain path (relative to source file or absolute) or URL.
