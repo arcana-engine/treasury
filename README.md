@@ -35,7 +35,8 @@ There are four fields that can be overridden.
    ```
    will override artifacts directory to specified path relative to `<base>`. Defaults to `<base>/treasury/artifacts`
 
-   Artifacts directory is where all artifacts are stored. This can and **SHOULD NOT** be covered by VCS. If path is inside repository  then it should be ignored.
+   Artifacts directory is where all artifacts are stored. This can and **SHOULD NOT** be covered by VCS. If path is inside repository then it should be ignored.
+   If Treasury creates artifacts directory (when storing an artifact and directory does not exist) it will create .gitignore file with "*".
 
 2. ```
    external = "<path>"
