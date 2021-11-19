@@ -6,11 +6,48 @@
 [![MIT/Apache](https://img.shields.io/badge/license-MIT%2FApache-blue.svg?style=for-the-badge)](COPYING)
 ![loc](https://img.shields.io/tokei/lines/github/arcana-engine/treasury?style=for-the-badge)
 
+
 Treasury is easy to use set of libraries and tools for creating asset pipelines for game engines or other applications.
 
-## :hand: Usage :hand:
 
-### :zap: Initialization :zap:
+Table of contents
+=================
+
+<!--ts-->
+  * [Installation](#computer-installation)
+  * [Usage](#hand-usage)
+    * [Initialization](#zap-initialization)
+    * [Configuration](#zap-configuration)
+    * [Storing](#zap-storing)
+      * [Store process](#store-process)
+    * [Fetching](#zap-fetching)
+    * [Importers](#zap-importers)
+      * [Example importer](#example-importer)
+  * [What is missing?](#what-is-missing)
+  * [License](#license)
+  * [Contributions](#contributions)
+<!--te-->
+
+
+## :computer: Installation
+
+:construction: Not yet released.
+
+<!-- Applications provided by treasury can be installed with `cargo`.
+
+To install server run
+```sh
+cargo install treasury-server
+```
+
+To install command line tool
+```sh
+cargo install treasury-cli
+``` -->
+
+## :hand: Usage
+
+### :zap: Initialization
 
 To start using Treasury an instance must be created.
 Treasury instance is defined by `Treasury.toml` file.
@@ -30,12 +67,12 @@ This file can be created manually :construction_worker: or using methods below:
 * Client library API provides method `Client::local`. With `init` argument set to `true` it will initialize Treasury. This is internally used by CLI call above.
 
 
-### :zap: Configuration :zap:
+### :zap: Configuration
 
 Default `Treasury.toml` file looks like this
 ```toml
 ```
-:boom: Yes, empty file.
+Yes, empty file.
 
 
 There are four fields that can be overridden.
@@ -70,7 +107,7 @@ There are four fields that can be overridden.
 
 Once initialized Treasury instance can be used to store and fetch assets.
 
-### :zap: Storing :zap:
+### :zap: Storing
 
 Storing assets in Treasury is straightforward.
 Using CLI took it looks like this
@@ -112,13 +149,13 @@ Whole process can be described in four steps:
 4. AssetId is returned.
 
 
-### :zap: Fetching :zap:
+### :zap: Fetching
 
 User can fetch artifacts of stored assets using asset source and target format.
 Or `AssetId`. Artifacts should always use `AssetId`.
 When asset sources migrate, .treasury file should come along. In this case reimporting would not be required and their `AssetId` is preserved.
 
-### :zap: Importers :zap:
+### :zap: Importers
 
 In order to store assets an importer is required to transform asset source :egg: into an artifact :baby_chick:.
 
@@ -130,6 +167,8 @@ This macro will export all necessary symbols that are expected by server.
 It will ensure ABI compatibility using major version of `treasury_import` crate.
 The macro an code it generates will do all the unsafe ops, leaving author of importers library with simple and 100% safe Rust.
 
+
+#### Example importer
 
 Basic importer library may look like this
 
