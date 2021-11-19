@@ -10,7 +10,7 @@ Treasury is easy to use set of libraries and tools for creating asset pipelines 
 
 ## Usage
 
-### Initialization
+### :zap: Initialization :zap:
 
 To start using Treasury an instance must be created.
 Treasury instance is defined by `Treasury.toml` file.
@@ -25,7 +25,7 @@ This file can be created manually or using methods below:\
 Default `Treasury.toml` file looks like this
 ```
 ```
-Yes, empty file.
+:boom: Yes, empty file.
 
 
 There are four fields that can be overridden.
@@ -60,26 +60,57 @@ There are four fields that can be overridden.
 
 Once initialized Treasury instance can be used to store and fetch assets.
 
-### Storing
+### :zap: Storing :zap:
 
-Assets can be stored and processed by Treasury
-The usage is straightforward.
+Storing assets in Treasury is straightforward.
+Using CLI took it looks like this
 
+```
+treasury store <source-path> <target-format>
+```
+
+The last line in output will contain `AssetId` if store operation is successful.
+Otherwise error will be printed.
+
+
+If source format is ambiguous, it can be specified after target format
+
+```
+treasury store <source-path> <target-format> <source-format>
+```
+
+
+To store asset from URL use `--url` (short `-u`) flag.
+
+```
+treasury store --url <source-url> <target-format> <source-format>
+```
+
+Without this flag source argument is always interpreted as filepath.
+With this flag source argument is always interpreted as URL. Which can be `file:` URL too.
+
+
+With library API storing is done using `treasury_client::Client::store_asset` method.
+
+
+#### Store process
+
+Whole process can be described in four steps:
 1. User provides asset source, target format that will be used by end application and optionally source format. Source format required only if ambiguous.
 2. A registered that matches source and target formats runs and processes asset into artifact.
 3. Treasury stores resulting artifact. It avoids storing duplicates though. Different assets may point to the same artifact.
 4. AssetId is returned.
 
 
-### Fetching
+### :zap: Fetching :zap:
 
 User can fetch artifacts of stored assets using asset source and target format.
 Or `AssetId`. Artifacts should always use `AssetId`.
 When asset sources migrate, .treasury file should come along. In this case reimporting would not be required and their `AssetId` is preserved.
 
-## Importers
+### :zap: Importers :zap:
 
-In order to store assets an importer is required to transform asset source into an artifact.
+In order to store assets an importer is required to transform asset source :egg: into an artifact :baby_chick:.
 
 Importers are types that implement `treasury_import::Importer` traits.
 Treasury can be configured to load importers from dynamic libraries.
@@ -88,7 +119,6 @@ To simplify writing of such library and minimize problems that can arise from in
 This macro will export all necessary symbols that are expected by server.
 It will ensure ABI compatibility using major version of `treasury_import` crate.
 The macro an code it generates will do all the unsafe ops, leaving author of importers library with simple and 100% safe Rust.
-
 
 Artifacts should always use `AssetId` to refer to dependencies.
 Asset source file can contain path (relative to source file or absolute) or URL.
@@ -102,7 +132,7 @@ Currently this project is bare-bone implementation of the asset pipeline.
 * Packing is not yet implemented. There must be a way to pack subset of artifacts into package optimized for storing on disk and loading without indirections.
 * Server is not ready to be used in remote mode. To prepare for that, server should be able to fetch local source data from client that requests store operation.
 * Currently only `file:` and `data:` URLs are supported. This is enough for working with local assets.
-* Hot-reloading is not yet possible as server does not watches for changes in sources.
+* :fire: Hot-reloading :fire: is not yet possible as server does not watches :eyes: for changes in sources.
 
 ## License
 
