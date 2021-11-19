@@ -4,7 +4,7 @@ use eyre::WrapErr;
 
 use treasury_id::AssetId;
 use treasury_import::{
-    version, ExportImportersFnType, ImportResult, ImporterFFI, VersionFnType,
+    version, ExportImportersFnType, ImportError, ImporterFFI, VersionFnType,
     EXPORT_IMPORTERS_FN_NAME, MAGIC, MAGIC_NAME, VERSION_FN_NAME,
 };
 
@@ -33,10 +33,10 @@ impl DylibImporter {
         output: &Path,
         sources: S,
         dependencies: D,
-    ) -> ImportResult
+    ) -> Result<(), ImportError>
     where
         S: Fn(&str) -> Option<&'a Path> + 'a,
-        D: Fn(&str, Option<&str>, &str) -> Option<AssetId>,
+        D: Fn(&str, &str) -> Option<AssetId>,
     {
         self.ffi.import(source, output, &sources, &dependencies)
     }

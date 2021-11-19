@@ -3,7 +3,7 @@ use std::{fmt, path::Path};
 use hashbrown::{hash_map::RawEntryMut, HashMap};
 use smallvec::SmallVec;
 use treasury_id::AssetId;
-use treasury_import::ImportResult;
+use treasury_import::ImportError;
 
 use self::dylib::DylibImporter;
 
@@ -154,10 +154,10 @@ impl Importer {
         output: &Path,
         sources: S,
         dependencies: D,
-    ) -> ImportResult
+    ) -> Result<(), ImportError>
     where
         S: Fn(&str) -> Option<&'a Path> + 'a,
-        D: Fn(&str, Option<&str>, &str) -> Option<AssetId>,
+        D: Fn(&str, &str) -> Option<AssetId>,
     {
         match self {
             Importer::DylibImporter(importer) => {

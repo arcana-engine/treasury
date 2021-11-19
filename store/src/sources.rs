@@ -56,12 +56,8 @@ impl Sources {
                         .wrap_err("Failed to create temporary file to store data URL content")?;
 
                     if source.as_str()[..data_start].ends_with(";base64,") {
-                        dbg!(data);
-
                         let decoded = base64::decode_config(data, base64::URL_SAFE_NO_PAD)
                             .wrap_err("Failed to decode base64 data url")?;
-
-                        dbg!(&decoded);
 
                         file.write_all(&decoded).wrap_err_with(|| {
                             format!(

@@ -11,6 +11,7 @@ use meta::{AssetMeta, SourceMeta};
 use sources::Sources;
 use temp::Temporaries;
 use treasury_id::{AssetId, AssetIdContext};
+use treasury_import::ImportError;
 use url::Url;
 
 mod importer;
@@ -26,13 +27,13 @@ const DEFAULT_EXTERNAL: &'static str = "external";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct TreasuryInfo {
-    // #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     artifacts: Option<PathBuf>,
-    // #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     external: Option<PathBuf>,
-    // #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     temp: Option<PathBuf>,
-    // #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     importers: Vec<PathBuf>,
 }
 
@@ -141,15 +142,19 @@ impl Treasury {
         let base_url = Url::from_directory_path(&base)
             .map_err(|()| eyre::eyre!("'{}' is invalid base path", base.display()))?;
 
-        let artifacts = meta
-            .artifacts
-            .unwrap_or_else(|| base.join(DEFAULT_AUX).join(DEFAULT_ARTIFACTS));
+        let artifacts = base.join(
+            meta.artifacts
+                .unwrap_or_else(|| Path::new(DEFAULT_AUX).join(DEFAULT_ARTIFACTS)),
+        );
 
-        let external = meta
-            .external
-            .unwrap_or_else(|| base.join(DEFAULT_AUX).join(DEFAULT_EXTERNAL));
+        let external = base.join(
+            meta.external
+                .unwrap_or_else(|| Path::new(DEFAULT_AUX).join(DEFAULT_EXTERNAL)),
+        );
 
-        let temp = meta.temp.unwrap_or_else(std::env::temp_dir);
+        let temp = meta
+            .temp
+            .map_or_else(std::env::temp_dir, |path| base.join(path));
 
         let id_ctx = AssetIdContext::new(treasury_epoch(), rand::random());
 
@@ -225,6 +230,21 @@ impl Treasury {
             let mut meta = SourceMeta::new(source, &self.base, &self.external)
                 .wrap_err("Failed to fetch source meta")?;
 
+            if let Some(asset) = meta.get_asset(target) {
+                tracing::debug!(
+                    "'{}' '{:?}' '{}' was already imported",
+                    source,
+                    format,
+                    target
+                );
+
+                queue.pop_back().unwrap();
+                if queue.is_empty() {
+                    return Ok(asset.id());
+                }
+                continue;
+            }
+
             let importer = match format {
                 None => importers.guess(url_ext(&source), target)?,
                 Some(format) => importers.get(format, target),
@@ -239,22 +259,7 @@ impl Treasury {
                 )
             })?;
 
-            let format = importer.format();
-
-            if let Some(asset) = meta.get_asset(format, target) {
-                tracing::debug!(
-                    "'{}' '{:?}' '{}' was already imported",
-                    source,
-                    format,
-                    target
-                );
-
-                queue.pop_back().unwrap();
-                if queue.is_empty() {
-                    return Ok(asset.id());
-                }
-                continue;
-            }
+            // let format = importer.format();
 
             // Fetch source file.
             let source_path = sources.fetch(&mut temporaries, source).await?.to_owned();
@@ -270,17 +275,12 @@ impl Treasury {
                     // Otherwise it was not important ^_^
                     sources.get(&src)
                 },
-                |src: &str, format: Option<&str>, target: &str| {
+                |src: &str, target: &str| {
                     let src = source.join(src).ok()?;
 
                     match SourceMeta::new(&src, base, external) {
                         Ok(meta) => {
-                            let format = match format {
-                                None => importers.guess(url_ext(&source), target).ok()??.format(),
-                                Some(format) => format,
-                            };
-
-                            let asset = meta.get_asset(format, target)?;
+                            let asset = meta.get_asset(target)?;
                             Some(asset.id())
                         }
                         Err(err) => {
@@ -292,17 +292,17 @@ impl Treasury {
             );
 
             match result {
-                treasury_import::ImportResult::Ok => {}
-                treasury_import::ImportResult::Err { reason } => {
+                Ok(()) => {}
+                Err(ImportError::Other { reason }) => {
                     return Err(eyre::eyre!(
                         "Failed to import {}:{}->{}. {}",
                         source,
-                        format,
+                        importer.format(),
                         target,
                         reason,
                     ))
                 }
-                treasury_import::ImportResult::RequireSources { sources: srcs } => {
+                Err(ImportError::RequireSources { sources: srcs }) => {
                     let source = source.clone();
                     for src in srcs {
                         match source.join(&src) {
@@ -321,24 +321,40 @@ impl Treasury {
                     }
                     continue;
                 }
-                treasury_import::ImportResult::RequireDependencies { triples } => {
+                Err(ImportError::RequireDependencies { dependencies }) => {
                     let source = source.clone();
-                    for (src, format, target) in triples.into_iter() {
-                        match source.join(&src) {
+                    for dep in dependencies.into_iter() {
+                        match source.join(&dep.source) {
                             Err(err) => {
                                 return Err(eyre::eyre!(
                                     "Failed to join URL '{}' with '{}'. {:#}",
                                     source,
-                                    src,
+                                    dep.source,
                                     err,
                                 ))
                             }
                             Ok(url) => {
-                                queue.push_back((url, format, target));
+                                queue.push_back((url, None, dep.target));
                             }
                         };
                     }
                     continue;
+                }
+            }
+
+            if !artifacts.exists() {
+                std::fs::create_dir_all(artifacts).wrap_err_with(|| {
+                    format!(
+                        "Failed to create artifacts directory '{}'",
+                        artifacts.display()
+                    )
+                })?;
+
+                if let Err(err) = std::fs::write(artifacts.join(".gitignore"), "*") {
+                    tracing::error!(
+                        "Failed to place .gitignore into artifacts directory. {:#}",
+                        err
+                    );
                 }
             }
 
@@ -349,7 +365,7 @@ impl Treasury {
 
             let (_url, _format, target) = queue.pop_back().unwrap();
 
-            meta.add_asset(format.to_owned(), target, asset, base, external)?;
+            meta.add_asset(target, asset, base, external)?;
 
             if queue.is_empty() {
                 return Ok(new_id);
@@ -363,12 +379,7 @@ impl Treasury {
     }
 
     /// Fetch asset data path.
-    pub fn fetch_triple(
-        &self,
-        source: &str,
-        format: Option<&str>,
-        target: &str,
-    ) -> eyre::Result<Option<PathBuf>> {
+    pub fn fetch_triple(&self, source: &str, target: &str) -> eyre::Result<Option<PathBuf>> {
         let source = self.base_url.join(source).wrap_err_with(|| {
             format!(
                 "Failed to construct URL from base '{}' and source '{}'",
@@ -379,25 +390,7 @@ impl Treasury {
         let meta = SourceMeta::new(&source, &self.base, &self.external)
             .wrap_err("Failed to fetch source meta")?;
 
-        let format_err = || {
-            eyre::eyre!(
-                "Failed to pick format for source '{}' and target '{}'",
-                source,
-                target
-            )
-        };
-
-        let format = match format {
-            None => self
-                .importers
-                .guess(url_ext(&source), target)
-                .wrap_err_with(format_err)?
-                .ok_or_else(format_err)?
-                .format(),
-            Some(format) => format,
-        };
-
-        match meta.get_asset(format, target) {
+        match meta.get_asset(target) {
             None => Ok(None),
             Some(asset) => Ok(Some(asset.artifact_path(&self.artifacts))),
         }

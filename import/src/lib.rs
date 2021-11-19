@@ -79,21 +79,24 @@ type OsChar = u8;
 #[cfg(windows)]
 type OsChar = u16;
 
+pub struct Dependency {
+    pub source: String,
+    pub target: String,
+}
+
 /// Result of `Importer::import` method.
-pub enum ImportResult {
-    /// Import successful.
-    Ok,
+pub enum ImportError {
     /// Importer requires data from other sources.
     RequireSources {
         /// URLs relative to source path.
         sources: Vec<String>,
     },
+
     /// Importer requires following dependencies.
-    RequireDependencies {
-        triples: Vec<(String, Option<String>, String)>,
-    },
+    RequireDependencies { dependencies: Vec<Dependency> },
+
     /// Importer failed to import the asset.
-    Err {
+    Other {
         /// Failure reason.
         reason: String,
     },
@@ -108,7 +111,7 @@ pub trait Importer: Send + Sync {
         output: &Path,
         sources: &impl Sources,
         dependencies: &impl Dependencies,
-    ) -> ImportResult;
+    ) -> Result<(), ImportError>;
 }
 
 #[repr(transparent)]
@@ -171,8 +174,8 @@ where
     let result = importer.import(source.as_ref(), output.as_ref(), &sources, &dependencies);
 
     match result {
-        ImportResult::Ok => SUCCESS,
-        ImportResult::RequireSources { sources } => {
+        Ok(()) => SUCCESS,
+        Err(ImportError::RequireSources { sources }) => {
             let len_required = sources
                 .iter()
                 .fold(0, |acc, p| acc + p.len() + size_of::<u32>())
@@ -216,9 +219,9 @@ where
             *result_len = len_required as u32;
             REQUIRE_SOURCES
         }
-        ImportResult::RequireDependencies { triples } => {
-            let len_required = triples.iter().fold(0, |acc, (s, f, t)| {
-                acc + s.len() + f.as_ref().map_or(0, String::len) + t.len() + size_of::<u32>() * 3
+        Err(ImportError::RequireDependencies { dependencies }) => {
+            let len_required = dependencies.iter().fold(0, |acc, dep| {
+                acc + dep.source.len() + dep.target.len() + size_of::<u32>() * 2
             }) + size_of::<u32>();
 
             assert!(u32::try_from(len_required).is_ok());
@@ -229,41 +232,30 @@ where
             }
 
             std::ptr::copy_nonoverlapping(
-                (triples.len() as u32).to_le_bytes().as_ptr(),
+                (dependencies.len() as u32).to_le_bytes().as_ptr(),
                 result_ptr,
                 size_of::<u32>(),
             );
 
             let mut offset = size_of::<u32>();
 
-            for (s, f, t) in &triples {
-                for s in [Some(s), f.as_ref(), Some(t)] {
-                    match s {
-                        None => {
-                            std::ptr::copy_nonoverlapping(
-                                (u32::MAX).to_le_bytes().as_ptr(),
-                                result_ptr.add(offset),
-                                size_of::<u32>(),
-                            );
-                        }
-                        Some(s) => {
-                            let len = s.len();
+            for dep in &dependencies {
+                for s in [&dep.source, &dep.target] {
+                    let len = s.len();
 
-                            std::ptr::copy_nonoverlapping(
-                                (len as u32).to_le_bytes().as_ptr(),
-                                result_ptr.add(offset),
-                                size_of::<u32>(),
-                            );
-                            offset += size_of::<u32>();
+                    std::ptr::copy_nonoverlapping(
+                        (len as u32).to_le_bytes().as_ptr(),
+                        result_ptr.add(offset),
+                        size_of::<u32>(),
+                    );
+                    offset += size_of::<u32>();
 
-                            std::ptr::copy_nonoverlapping(
-                                s.as_ptr(),
-                                result_ptr.add(offset),
-                                len as u32 as usize,
-                            );
-                            offset += len;
-                        }
-                    }
+                    std::ptr::copy_nonoverlapping(
+                        s.as_ptr(),
+                        result_ptr.add(offset),
+                        len as u32 as usize,
+                    );
+                    offset += len;
                 }
             }
 
@@ -272,7 +264,7 @@ where
             *result_len = len_required as u32;
             REQUIRE_DEPENDENCIES
         }
-        ImportResult::Err { reason } => {
+        Err(ImportError::Other { reason }) => {
             if *result_len < reason.len() as u32 {
                 *result_len = reason.len() as u32;
                 return BUFFER_IS_TOO_SMALL;
@@ -442,10 +434,10 @@ impl ImporterFFI {
         output: &Path,
         sources: &S,
         dependencies: &D,
-    ) -> ImportResult
+    ) -> Result<(), ImportError>
     where
         S: Fn(&str) -> Option<&'a Path> + 'a,
-        D: Fn(&str, Option<&str>, &str) -> Option<AssetId>,
+        D: Fn(&str, &str) -> Option<AssetId>,
     {
         let os_str = source.as_os_str();
 
@@ -494,12 +486,12 @@ impl ImporterFFI {
 
             if result == BUFFER_IS_TOO_SMALL {
                 if result_len > ANY_BUF_LEN_LIMIT as u32 {
-                    return ImportResult::Err {
+                    return Err(ImportError::Other {
                         reason: format!(
                             "Result does not fit into limit '{}', '{}' required",
                             ANY_BUF_LEN_LIMIT, result_len
                         ),
-                    };
+                    });
                 }
 
                 result_buf.resize(result_len as usize, 0);
@@ -507,7 +499,7 @@ impl ImporterFFI {
             }
 
             return match result {
-                SUCCESS => ImportResult::Ok,
+                SUCCESS => Ok(()),
                 REQUIRE_SOURCES => unsafe {
                     let mut u32buf = [0; size_of::<u32>()];
                     std::ptr::copy_nonoverlapping(
@@ -536,14 +528,14 @@ impl ImporterFFI {
                         );
                         match String::from_utf8(source) {
                             Ok(source) => sources.push(source),
-                            Err(_) => return ImportResult::Err {
+                            Err(_) => return Err(ImportError::Other {
                                 reason: "`Importer::import` requires sources, but one of the sources is not UTF-8"
                                     .to_owned(),
-                            },
+                            }),
                         }
                     }
 
-                    ImportResult::RequireSources { sources }
+                    Err(ImportError::RequireSources { sources })
                 },
                 REQUIRE_DEPENDENCIES => unsafe {
                     let mut u32buf = [0; size_of::<u32>()];
@@ -556,91 +548,37 @@ impl ImporterFFI {
 
                     let mut offset = size_of::<u32>();
 
-                    let mut triples = Vec::new();
+                    let mut dependencies = Vec::new();
                     for _ in 0..count {
-                        // Decode source
+                        let mut decode_string = || {
+                            std::ptr::copy_nonoverlapping(
+                                result_buf[offset..][..size_of::<u32>()].as_ptr(),
+                                u32buf.as_mut_ptr(),
+                                size_of::<u32>(),
+                            );
+                            offset += size_of::<u32>();
+                            let len = u32::from_be_bytes(u32buf);
 
-                        std::ptr::copy_nonoverlapping(
-                            result_buf[offset..][..size_of::<u32>()].as_ptr(),
-                            u32buf.as_mut_ptr(),
-                            size_of::<u32>(),
-                        );
-                        offset += size_of::<u32>();
-                        let len = u32::from_be_bytes(u32buf);
+                            let mut string = vec![0; len as usize];
+                            std::ptr::copy_nonoverlapping(
+                                result_buf[offset..][..len as usize].as_ptr(),
+                                string.as_mut_ptr(),
+                                len as usize,
+                            );
 
-                        let mut source = vec![0; len as usize];
-                        std::ptr::copy_nonoverlapping(
-                            result_buf[offset..][..len as usize].as_ptr(),
-                            source.as_mut_ptr(),
-                            len as usize,
-                        );
-
-                        let source = match String::from_utf8(source) {
-                            Ok(source) => source,
-                            Err(_) => return ImportResult::Err {
-                                reason: "`Importer::import` requires dependencies, but one of the sources is not UTF-8"
-                                    .to_owned(),
-                            },
-                        };
-
-                        // Decode format
-
-                        std::ptr::copy_nonoverlapping(
-                            result_buf[offset..][..size_of::<u32>()].as_ptr(),
-                            u32buf.as_mut_ptr(),
-                            size_of::<u32>(),
-                        );
-                        offset += size_of::<u32>();
-                        let len = u32::from_be_bytes(u32buf);
-
-                        let format = match len {
-                            u32::MAX => None,
-                            _ => {
-                                let mut format = vec![0; len as usize];
-                                std::ptr::copy_nonoverlapping(
-                                    result_buf[offset..][..len as usize].as_ptr(),
-                                    format.as_mut_ptr(),
-                                    len as usize,
-                                );
-
-                                match String::from_utf8(format) {
-                                    Ok(format) => Some(format),
-                                    Err(_) => return ImportResult::Err {
-                                        reason: "`Importer::import` requires dependencies, but one of the formats is not UTF-8"
-                                            .to_owned(),
-                                    },
-                                }
+                            match String::from_utf8(string) {
+                                Ok(string) => Ok(string),
+                                Err(_) => return Err(ImportError::Other { reason: "`Importer::import` requires dependencies, but one of the strings is not UTF-8".to_owned() }),
                             }
                         };
 
-                        // Decode target
+                        let source = decode_string()?;
+                        let target = decode_string()?;
 
-                        std::ptr::copy_nonoverlapping(
-                            result_buf[offset..][..size_of::<u32>()].as_ptr(),
-                            u32buf.as_mut_ptr(),
-                            size_of::<u32>(),
-                        );
-                        offset += size_of::<u32>();
-                        let len = u32::from_be_bytes(u32buf);
-                        let mut target = vec![0; len as usize];
-                        std::ptr::copy_nonoverlapping(
-                            result_buf[offset..][..len as usize].as_ptr(),
-                            target.as_mut_ptr(),
-                            len as usize,
-                        );
-
-                        let target = match String::from_utf8(target) {
-                            Ok(target) => target,
-                            Err(_) => return ImportResult::Err {
-                                reason: "`Importer::import` requires dependencies, but one of the targets is not UTF-8"
-                                    .to_owned(),
-                            },
-                        };
-
-                        triples.push((source, format, target));
+                        dependencies.push(Dependency { source, target });
                     }
 
-                    ImportResult::RequireDependencies { triples }
+                    Err(ImportError::RequireDependencies { dependencies })
                 },
                 OTHER_ERROR => {
                     debug_assert!(result_len <= result_buf.len() as u32);
@@ -648,16 +586,16 @@ impl ImporterFFI {
                     let error = &result_buf[..result_len as usize];
                     let error_lossy = String::from_utf8_lossy(error);
 
-                    ImportResult::Err {
+                    Err(ImportError::Other {
                         reason: error_lossy.into_owned(),
-                    }
+                    })
                 }
-                _ => ImportResult::Err {
+                _ => Err(ImportError::Other {
                     reason: format!(
                         "Unexpected return code from `Importer::import` FFI: {}",
                         result
                     ),
-                },
+                }),
             };
         }
     }

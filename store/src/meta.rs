@@ -24,7 +24,7 @@ const DOT_EXTENSION: &'static str = ".treasure";
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct SourceMeta {
     url: Url,
-    assets: HashMap<String, HashMap<String, AssetMeta>>,
+    assets: HashMap<String, AssetMeta>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -56,13 +56,6 @@ fn suffix_is_zero(suffix: &usize) -> bool {
 
 impl AssetMeta {
     pub fn new(id: AssetId, output: &Path, artifacts: &Path) -> eyre::Result<Self> {
-        std::fs::create_dir_all(artifacts).wrap_err_with(|| {
-            format!(
-                "Failed to create artifacts directory '{}'",
-                artifacts.display()
-            )
-        })?;
-
         let sha256 = HashSha256::file_hash(output).wrap_err_with(|| {
             format!(
                 "Failed to calculate hash of the file '{}'",
@@ -242,30 +235,24 @@ impl SourceMeta {
         }
     }
 
-    pub fn get_asset(&self, format: &str, target: &str) -> Option<&AssetMeta> {
-        self.assets.get(format)?.get(target)
+    pub fn get_asset(&self, target: &str) -> Option<&AssetMeta> {
+        self.assets.get(target)
     }
 
     pub fn add_asset(
         &mut self,
-        format: String,
         target: String,
         asset: AssetMeta,
         base: &Path,
         external: &Path,
     ) -> eyre::Result<()> {
-        match self.assets.entry(format) {
+        match self.assets.entry(target) {
             Entry::Vacant(entry) => {
-                entry.insert(HashMap::new()).insert(target, asset);
+                entry.insert(asset);
             }
-            Entry::Occupied(mut entry) => match entry.get_mut().entry(target) {
-                Entry::Vacant(entry) => {
-                    entry.insert(asset);
-                }
-                Entry::Occupied(_) => {
-                    panic!("Asset already exists");
-                }
-            },
+            Entry::Occupied(_) => {
+                panic!("Asset already exists");
+            }
         }
 
         let (meta_path, is_external) = get_meta_path(&self.url, base, external)?;

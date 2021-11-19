@@ -1,1 +1,1 @@
-importers = ["../target/debug/foo_importer.dll"]
+importers = ["../target/debug/foo_importer"]

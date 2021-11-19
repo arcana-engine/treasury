@@ -1,6 +1,7 @@
 use std::{
     borrow::{Borrow, Cow},
     fmt::{self, Debug, LowerHex, UpperHex},
+    fs::File,
     num::ParseIntError,
     ops::Deref,
     path::Path,
@@ -129,11 +130,8 @@ impl HashSha256 {
         // Check for a duplicate.
         let mut hasher = Sha256::new();
 
-        // let mut file = File::open(&path)?;
-        // std::io::copy(&mut file, &mut hasher)?;
-
-        let content = std::fs::read(&path)?;
-        hasher.update(dbg!(&content));
+        let mut file = File::open(&path)?;
+        std::io::copy(&mut file, &mut hasher)?;
 
         let mut bytes = [0u8; 32];
         bytes.copy_from_slice(&hasher.finalize());
