@@ -16,8 +16,8 @@ use tokio::{
     time::sleep,
 };
 use treasury_api::{
-    get_port, recv_handshake, recv_message, send_message, FetchResponse, OpenRequest, OpenResponse,
-    Request, StoreResponse,
+    get_port, recv_handshake, recv_message, send_message, FetchUrlResponse, OpenRequest,
+    OpenResponse, Request, StoreResponse,
 };
 use treasury_store::Treasury;
 use url::Url;
@@ -218,13 +218,13 @@ async fn try_serve(
                     .await?
                 }
             },
-            Some(Request::FetchUrl { id }) => match treasury.fetch(id) {
-                None => send_message(&mut stream, FetchResponse::NotFound).await?,
+            Some(Request::FetchUrlById { id }) => match treasury.fetch_by_id(id) {
+                None => send_message(&mut stream, FetchUrlResponse::NotFound).await?,
                 Some(path) => match Url::from_file_path(&path) {
                     Ok(url) => {
                         send_message(
                             &mut stream,
-                            FetchResponse::Success {
+                            FetchUrlResponse::Success {
                                 artifact: url.to_string().into_boxed_str(),
                             },
                         )
@@ -233,7 +233,7 @@ async fn try_serve(
                     Err(()) => {
                         send_message(
                             &mut stream,
-                            FetchResponse::Failure {
+                            FetchUrlResponse::Failure {
                                 description: format!(
                                     "Failed to convert path '{}' to URL",
                                     path.display(),
@@ -245,7 +245,45 @@ async fn try_serve(
                     }
                 },
             },
-            _ => todo!(),
+            Some(Request::FetchUrlBySourceTarget { source, target }) => {
+                match treasury.fetch_by_source_target(&source, &target) {
+                    Err(err) => {
+                        send_message(
+                            &mut stream,
+                            FetchUrlResponse::Failure {
+                                description: format!("Failed to fetch asset. {:#}", err)
+                                    .into_boxed_str(),
+                            },
+                        )
+                        .await?
+                    }
+                    Ok(None) => send_message(&mut stream, FetchUrlResponse::NotFound).await?,
+                    Ok(Some(path)) => match Url::from_file_path(&path) {
+                        Ok(url) => {
+                            send_message(
+                                &mut stream,
+                                FetchUrlResponse::Success {
+                                    artifact: url.to_string().into_boxed_str(),
+                                },
+                            )
+                            .await?
+                        }
+                        Err(()) => {
+                            send_message(
+                                &mut stream,
+                                FetchUrlResponse::Failure {
+                                    description: format!(
+                                        "Failed to convert path '{}' to URL",
+                                        path.display(),
+                                    )
+                                    .into_boxed_str(),
+                                },
+                            )
+                            .await?
+                        }
+                    },
+                }
+            }
         }
     }
 }

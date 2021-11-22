@@ -374,12 +374,16 @@ impl Treasury {
     }
 
     /// Fetch asset data path.
-    pub fn fetch(&self, id: AssetId) -> Option<PathBuf> {
+    pub fn fetch_by_id(&self, id: AssetId) -> Option<PathBuf> {
         self.artifact_map.get(&id).cloned()
     }
 
     /// Fetch asset data path.
-    pub fn fetch_triple(&self, source: &str, target: &str) -> eyre::Result<Option<PathBuf>> {
+    pub fn fetch_by_source_target(
+        &self,
+        source: &str,
+        target: &str,
+    ) -> eyre::Result<Option<PathBuf>> {
         let source = self.base_url.join(source).wrap_err_with(|| {
             format!(
                 "Failed to construct URL from base '{}' and source '{}'",

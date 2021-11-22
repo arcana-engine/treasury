@@ -11,8 +11,8 @@ use std::{
 use eyre::Context;
 use tokio::{io::BufReader, net::TcpStream};
 use treasury_api::{
-    get_port, recv_message, send_handshake, send_message, OpenRequest, OpenResponse, Request,
-    StoreResponse,
+    get_port, recv_message, send_handshake, send_message, FetchUrlResponse, OpenRequest,
+    OpenResponse, Request, StoreResponse,
 };
 use treasury_id::AssetId;
 use url::Url;
@@ -83,7 +83,7 @@ impl Client {
         send_message(
             &mut self.stream,
             Request::Store {
-                source: source.to_string().into_boxed_str(),
+                source: source.as_str().into(),
                 format: format.map(|f| f.into()),
                 target: target.into(),
             },
@@ -109,6 +109,62 @@ impl Client {
                 "Treasury requires access to '{}' to finish store operation",
                 url
             )),
+        }
+    }
+
+    /// Store asset into treasury from specified URL.
+    #[tracing::instrument]
+    pub async fn fetch_by_id(&mut self, id: AssetId) -> eyre::Result<Option<Url>> {
+        send_message(&mut self.stream, Request::FetchUrlById { id })
+            .await
+            .wrap_err("Failed to send Store request")?;
+
+        self.fetch_recv_impl().await
+    }
+
+    /// Store asset into treasury from specified URL.
+    #[tracing::instrument]
+    pub async fn fetch_by_source_target(
+        &mut self,
+        source: &Url,
+        target: &str,
+    ) -> eyre::Result<Option<Url>> {
+        send_message(
+            &mut self.stream,
+            Request::FetchUrlBySourceTarget {
+                source: source.as_str().into(),
+                target: target.into(),
+            },
+        )
+        .await
+        .wrap_err("Failed to send Store request")?;
+
+        self.fetch_recv_impl().await
+    }
+
+    async fn fetch_recv_impl(&mut self) -> eyre::Result<Option<Url>> {
+        match recv_message(&mut self.stream)
+            .await
+            .wrap_err("Failed to receive response for Store request")?
+        {
+            None => Err(eyre::eyre!(
+                "Failed to receive response for Store request. Connection lost."
+            )),
+            Some(FetchUrlResponse::Success { artifact }) => {
+                tracing::info!("Store requested succeeded");
+                let url = Url::parse(&artifact).wrap_err_with(|| {
+                    format!(
+                        "Failed to parse URL from '{}' from server response",
+                        artifact
+                    )
+                })?;
+
+                Ok(Some(url))
+            }
+            Some(FetchUrlResponse::Failure { description }) => {
+                Err(eyre::eyre!("Store request failure. {}", description))
+            }
+            Some(FetchUrlResponse::NotFound) => Ok(None),
         }
     }
 }

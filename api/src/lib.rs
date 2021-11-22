@@ -61,10 +61,10 @@ pub enum Request {
     },
 
     /// Fetches url of the artifact for the specified asset.
-    FetchUrl { id: AssetId },
+    FetchUrlById { id: AssetId },
 
-    /// Fetches content of the artifact for the specified asset.
-    FetchContent { id: AssetId },
+    /// Fetches url of the artifact for the specified asset.
+    FetchUrlBySourceTarget { source: Box<str>, target: Box<str> },
 }
 
 /// Response to store request.
@@ -83,7 +83,7 @@ pub enum StoreResponse {
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum FetchResponse {
+pub enum FetchUrlResponse {
     /// Success.
     /// Payload contains URL of the artifact.
     Success { artifact: Box<str> },
