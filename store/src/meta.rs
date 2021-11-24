@@ -188,55 +188,37 @@ impl SourceMeta {
     /// Finds and returns meta for the source URL.
     /// Creates new file if needed.
     pub fn new(source: &Url, base: &Path, external: &Path) -> eyre::Result<SourceMeta> {
-        let (meta_path, _is_external) = get_meta_path(source, base, external)?;
-        Self::open(&meta_path, base, external)
+        let (meta_path, is_external) = get_meta_path(source, base, external)?;
+
+        if is_external {
+            SourceMeta::open_external(&meta_path)
+        } else {
+            SourceMeta::open_local(&meta_path)
+        }
     }
 
-    pub fn open(meta_path: &Path, base: &Path, external: &Path) -> eyre::Result<SourceMeta> {
-        let meta_path = dunce::canonicalize(meta_path).map_err(|err| CanonError {
-            error: err,
-            path: meta_path.to_owned(),
-        })?;
+    pub fn is_local_meta_path(meta_path: &Path) -> bool {
+        meta_path.extension().map_or(false, |e| e == EXTENSION)
+    }
 
-        if meta_path.extension() == Some(EXTENSION.as_ref()) {
-            // Local case.
-            if !meta_path.starts_with(base) {
-                return Err(eyre::eyre!(
-                    "Local meta path '{}' is expected to be prefixed by base path '{}'",
-                    meta_path.display(),
-                    base.display(),
-                ));
-            }
-            let source_path = meta_path.with_extension("");
-            let url = Url::from_file_path(&source_path)
-                .map_err(|()| UrlFromPathError { path: source_path })?;
-            let meta = SourceMeta::read_from(url, &meta_path)?;
-            Ok(meta)
-        } else {
-            // External case
-            if !meta_path.starts_with(external) {
-                return Err(eyre::eyre!(
-                    "External meta path '{}' is expected to be prefixed by base path '{}'",
-                    meta_path.display(),
-                    external.display(),
-                ));
-            }
+    pub fn open_local(meta_path: &Path) -> eyre::Result<SourceMeta> {
+        let source_path = meta_path.with_extension("");
+        let url = Url::from_file_path(&source_path)
+            .map_err(|()| UrlFromPathError { path: source_path })?;
+        let meta = SourceMeta::read_from(url, &meta_path)?;
+        Ok(meta)
+    }
 
-            if meta_path.extension().is_some() {
-                return Err(eyre::eyre!(
-                    "External meta path '{}' must have no extension",
-                    meta_path.display(),
-                ));
-            }
-
-            let meta = SourceMeta::read_with_url_from(&meta_path)?;
-
-            Ok(meta)
-        }
+    pub fn open_external(meta_path: &Path) -> eyre::Result<SourceMeta> {
+        SourceMeta::read_with_url_from(&meta_path)
     }
 
     pub fn get_asset(&self, target: &str) -> Option<&AssetMeta> {
         self.assets.get(target)
+    }
+
+    pub fn assets_mut(&mut self) -> impl Iterator<Item = &mut AssetMeta> + '_ {
+        self.assets.values_mut()
     }
 
     pub fn add_asset(

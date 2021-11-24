@@ -8,14 +8,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use eyre::Context;
+use eyre::WrapErr;
 use tokio::{io::BufReader, net::TcpStream};
 use treasury_api::{
-    get_port, recv_message, send_handshake, send_message, FetchUrlResponse, OpenRequest,
-    OpenResponse, Request, StoreResponse,
+    get_port, recv_message, send_handshake, send_message, FetchUrlResponse, FindResponse,
+    OpenRequest, OpenResponse, Request, StoreResponse,
 };
-use treasury_id::AssetId;
 use url::Url;
+
+pub use treasury_id::AssetId;
 
 #[derive(Debug, serde::Deserialize)]
 enum Treasury {
@@ -114,44 +115,20 @@ impl Client {
 
     /// Store asset into treasury from specified URL.
     #[tracing::instrument]
-    pub async fn fetch_by_id(&mut self, id: AssetId) -> eyre::Result<Option<Url>> {
-        send_message(&mut self.stream, Request::FetchUrlById { id })
+    pub async fn fetch(&mut self, id: AssetId) -> eyre::Result<Option<Url>> {
+        send_message(&mut self.stream, Request::FetchUrl { id })
             .await
             .wrap_err("Failed to send Store request")?;
 
-        self.fetch_recv_impl().await
-    }
-
-    /// Store asset into treasury from specified URL.
-    #[tracing::instrument]
-    pub async fn fetch_by_source_target(
-        &mut self,
-        source: &Url,
-        target: &str,
-    ) -> eyre::Result<Option<Url>> {
-        send_message(
-            &mut self.stream,
-            Request::FetchUrlBySourceTarget {
-                source: source.as_str().into(),
-                target: target.into(),
-            },
-        )
-        .await
-        .wrap_err("Failed to send Store request")?;
-
-        self.fetch_recv_impl().await
-    }
-
-    async fn fetch_recv_impl(&mut self) -> eyre::Result<Option<Url>> {
         match recv_message(&mut self.stream)
             .await
-            .wrap_err("Failed to receive response for Store request")?
+            .wrap_err("Failed to receive response for Find request")?
         {
             None => Err(eyre::eyre!(
-                "Failed to receive response for Store request. Connection lost."
+                "Failed to receive response for Find request. Connection lost."
             )),
             Some(FetchUrlResponse::Success { artifact }) => {
-                tracing::info!("Store requested succeeded");
+                tracing::info!("Find requested succeeded");
                 let url = Url::parse(&artifact).wrap_err_with(|| {
                     format!(
                         "Failed to parse URL from '{}' from server response",
@@ -162,9 +139,41 @@ impl Client {
                 Ok(Some(url))
             }
             Some(FetchUrlResponse::Failure { description }) => {
-                Err(eyre::eyre!("Store request failure. {}", description))
+                Err(eyre::eyre!("Find request failure. {}", description))
             }
             Some(FetchUrlResponse::NotFound) => Ok(None),
+        }
+    }
+
+    /// Store asset into treasury from specified URL.
+    #[tracing::instrument]
+    pub async fn find(&mut self, source: &Url, target: &str) -> eyre::Result<Option<AssetId>> {
+        send_message(
+            &mut self.stream,
+            Request::FindAsset {
+                source: source.as_str().into(),
+                target: target.into(),
+            },
+        )
+        .await
+        .wrap_err("Failed to send Store request")?;
+
+        match recv_message(&mut self.stream)
+            .await
+            .wrap_err("Failed to receive response for Find request")?
+        {
+            None => Err(eyre::eyre!(
+                "Failed to receive response for Find request. Connection lost."
+            )),
+            Some(FindResponse::Success { id }) => {
+                tracing::info!("Find requested succeeded");
+
+                Ok(Some(id))
+            }
+            Some(FindResponse::Failure { description }) => {
+                Err(eyre::eyre!("Find request failure. {}", description))
+            }
+            Some(FindResponse::NotFound) => Ok(None),
         }
     }
 }

@@ -8,6 +8,7 @@ use eyre::WrapErr;
 use hashbrown::HashMap;
 use importer::Importers;
 use meta::{AssetMeta, SourceMeta};
+use parking_lot::RwLock;
 use sources::Sources;
 use temp::Temporaries;
 use treasury_id::{AssetId, AssetIdContext};
@@ -57,11 +58,13 @@ pub struct Treasury {
     id_ctx: AssetIdContext,
     base: PathBuf,
     base_url: Url,
-    artifacts: PathBuf,
+    artifacts_base: PathBuf,
     external: PathBuf,
     temp: PathBuf,
     importers: Importers,
-    artifact_map: HashMap<AssetId, PathBuf>,
+
+    artifacts: RwLock<HashMap<AssetId, PathBuf>>,
+    scanned: RwLock<bool>,
 }
 
 impl Treasury {
@@ -181,11 +184,12 @@ impl Treasury {
             id_ctx,
             base,
             base_url,
-            artifacts,
+            artifacts_base: artifacts,
             external,
             temp,
             importers,
-            artifact_map: HashMap::new(),
+            artifacts: RwLock::new(HashMap::new()),
+            scanned: RwLock::new(false),
         })
     }
 
@@ -217,7 +221,7 @@ impl Treasury {
         let mut sources = Sources::new();
 
         let base = &self.base;
-        let artifacts = &self.artifacts;
+        let artifacts = &self.artifacts_base;
         let external = &self.external;
         let importers = &self.importers;
 
@@ -374,16 +378,56 @@ impl Treasury {
     }
 
     /// Fetch asset data path.
-    pub fn fetch_by_id(&self, id: AssetId) -> Option<PathBuf> {
-        self.artifact_map.get(&id).cloned()
+    pub fn fetch(&self, id: AssetId) -> Option<PathBuf> {
+        let scanned = self.scanned.read();
+        if *scanned {
+            self.artifacts.read().get(&id).cloned()
+        } else {
+            drop(scanned);
+
+            let artifacts = self.artifacts.read();
+            if artifacts.contains_key(&id) {
+                artifacts.get(&id).cloned()
+            } else {
+                let mut new_artifacts = Vec::new();
+                let mut scanned = self.scanned.write();
+
+                if *scanned {
+                    artifacts.get(&id).cloned()
+                } else {
+                    scan_local(
+                        &self.base,
+                        &self.artifacts_base,
+                        &artifacts,
+                        &mut new_artifacts,
+                    );
+                    scan_external(
+                        &self.external,
+                        &self.artifacts_base,
+                        &artifacts,
+                        &mut new_artifacts,
+                    );
+
+                    drop(artifacts);
+                    let mut artifacts = self.artifacts.write();
+                    for (new_id, path) in new_artifacts {
+                        artifacts.insert(new_id, path);
+                    }
+
+                    *scanned = true;
+                    let path = artifacts.get(&id).cloned();
+
+                    drop(artifacts);
+                    drop(scanned);
+
+                    path
+                }
+            }
+        }
     }
 
     /// Fetch asset data path.
-    pub fn fetch_by_source_target(
-        &self,
-        source: &str,
-        target: &str,
-    ) -> eyre::Result<Option<PathBuf>> {
+    pub fn find_asset(&self, source: &str, target: &str) -> eyre::Result<Option<AssetId>> {
         let source = self.base_url.join(source).wrap_err_with(|| {
             format!(
                 "Failed to construct URL from base '{}' and source '{}'",
@@ -396,7 +440,7 @@ impl Treasury {
 
         match meta.get_asset(target) {
             None => Ok(None),
-            Some(asset) => Ok(Some(asset.artifact_path(&self.artifacts))),
+            Some(asset) => Ok(Some(asset.id())),
         }
     }
 }
@@ -421,9 +465,143 @@ fn treasury_epoch() -> SystemTime {
 fn url_ext(url: &Url) -> Option<&str> {
     let path = url.path();
     let dot = path.rfind('.')?;
-    if dot == path.len() {
+    let sep = path.rfind('/')?;
+    if dot == path.len() || dot <= sep + 1 {
         None
     } else {
         Some(&path[dot + 1..])
+    }
+}
+
+fn scan_external(
+    external: &Path,
+    artifacts_base: &Path,
+    existing_artifacts: &HashMap<AssetId, PathBuf>,
+    artifacts: &mut Vec<(AssetId, PathBuf)>,
+) {
+    match std::fs::read_dir(&external) {
+        Err(err) => tracing::error!(
+            "Failed to scan directory '{}'. {:#}",
+            external.display(),
+            err
+        ),
+        Ok(dir) => {
+            for e in dir {
+                match e {
+                    Err(err) => tracing::error!(
+                        "Failed to read entry in directory '{}'. {:#}",
+                        external.display(),
+                        err,
+                    ),
+                    Ok(e) => {
+                        let name = e.file_name();
+                        let path = external.join(&name);
+                        match e.file_type() {
+                            Err(err) => {
+                                tracing::error!("Failed to check '{}'. {:#}", path.display(), err)
+                            }
+                            Ok(ft) => match () {
+                                () if ft.is_file() && !SourceMeta::is_local_meta_path(&path) => {
+                                    match SourceMeta::open_external(&path) {
+                                        Err(err) => {
+                                            tracing::error!(
+                                                "Failed to scan meta file '{}'. {:#}",
+                                                path.display(),
+                                                err
+                                            );
+                                        }
+                                        Ok(mut meta) => {
+                                            for asset in meta.assets_mut() {
+                                                if !existing_artifacts.contains_key(&asset.id()) {
+                                                    artifacts.push((
+                                                        asset.id(),
+                                                        asset.artifact_path(artifacts_base),
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            },
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn scan_local(
+    base: &Path,
+    artifacts_base: &Path,
+    existing_artifacts: &HashMap<AssetId, PathBuf>,
+    artifacts: &mut Vec<(AssetId, PathBuf)>,
+) {
+    debug_assert!(base.is_absolute());
+
+    let mut queue = VecDeque::new();
+    queue.push_back(base.to_owned());
+
+    while let Some(dir_path) = queue.pop_front() {
+        match std::fs::read_dir(&dir_path) {
+            Err(err) => tracing::error!(
+                "Failed to scan directory '{}'. {:#}",
+                dir_path.display(),
+                err
+            ),
+            Ok(dir) => {
+                for e in dir {
+                    match e {
+                        Err(err) => tracing::error!(
+                            "Failed to read entry in directory '{}'. {:#}",
+                            dir_path.display(),
+                            err,
+                        ),
+                        Ok(e) => {
+                            let name = e.file_name();
+                            let path = dir_path.join(&name);
+                            match e.file_type() {
+                                Err(err) => {
+                                    tracing::error!(
+                                        "Failed to check '{}'. {:#}",
+                                        path.display(),
+                                        err
+                                    )
+                                }
+                                Ok(ft) => match () {
+                                    () if ft.is_dir() => {
+                                        queue.push_back(path);
+                                    }
+                                    () if ft.is_file() && SourceMeta::is_local_meta_path(&path) => {
+                                        match SourceMeta::open_local(&path) {
+                                            Err(err) => {
+                                                tracing::error!(
+                                                    "Failed to scan meta file '{}'. {:#}",
+                                                    path.display(),
+                                                    err
+                                                );
+                                            }
+                                            Ok(mut meta) => {
+                                                for asset in meta.assets_mut() {
+                                                    if !existing_artifacts.contains_key(&asset.id())
+                                                    {
+                                                        artifacts.push((
+                                                            asset.id(),
+                                                            asset.artifact_path(artifacts_base),
+                                                        ));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    () => {}
+                                },
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

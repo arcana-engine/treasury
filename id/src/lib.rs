@@ -81,6 +81,12 @@ impl AssetId {
     }
 }
 
+impl From<NonZeroU64> for AssetId {
+    fn from(value: NonZeroU64) -> Self {
+        AssetId(value)
+    }
+}
+
 impl TryFrom<u64> for AssetId {
     type Error = ZeroIDError;
 
