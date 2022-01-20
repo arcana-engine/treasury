@@ -606,7 +606,7 @@ impl ImporterFFI {
 
 /// Define exports required for an importers library.
 /// Accepts repetition of the following pattern:
-/// <format string literal> -> <target string literal> : <importer expression of type [`&'static impl Importer`]">
+/// <optional array of extensions> <importer name> : <format string literal> -> <target string literal> = <importer expression of type [`&'static impl Importer`]">
 #[macro_export]
 macro_rules! make_treasury_importers_library {
     ($(
