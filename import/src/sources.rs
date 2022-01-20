@@ -126,7 +126,7 @@ impl Sources for SourcesFFI {
             return match result {
                 SUCCESS => {
                     #[cfg(any(unix, target_os = "wasi"))]
-                    let path = OsStrext::from_vec(path_buf).into();
+                    let path = OsString::from_vec(path_buf).into();
 
                     #[cfg(windows)]
                     let path = OsString::from_wide(&path_buf).into();

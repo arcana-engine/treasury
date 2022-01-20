@@ -18,16 +18,19 @@
 //! }
 //! ```
 
-use std::{borrow::Cow, ffi::OsString, mem::size_of, path::Path, str::Utf8Error};
+use std::{borrow::Cow, mem::size_of, path::Path, str::Utf8Error};
 
 #[cfg(unix)]
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
 
 #[cfg(target_os = "wasi")]
-use std::os::wasi::ffi::{OsStrExt, OsStringExt};
+use std::{ffi::OsStr, os::wasi::ffi::OsStrExt};
 
 #[cfg(windows)]
-use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::{
+    ffi::OsString,
+    os::windows::ffi::{OsStrExt, OsStringExt},
+};
 
 use dependencies::DependenciesFFI;
 use sources::SourcesFFI;
