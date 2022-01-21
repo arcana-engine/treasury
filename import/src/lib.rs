@@ -40,7 +40,7 @@ mod sources;
 
 pub use dependencies::Dependencies;
 pub use sources::Sources;
-use treasury_id::AssetId;
+pub use treasury_id::AssetId;
 
 pub const MAGIC: u32 = u32::from_le_bytes(*b"TRES");
 
@@ -82,6 +82,7 @@ type OsChar = u8;
 #[cfg(windows)]
 type OsChar = u16;
 
+#[derive(Debug)]
 pub struct Dependency {
     pub source: String,
     pub target: String,
@@ -103,6 +104,24 @@ pub enum ImportError {
         /// Failure reason.
         reason: String,
     },
+}
+
+pub fn ensure_dependencies(missing: Vec<Dependency>) -> Result<(), ImportError> {
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(ImportError::RequireDependencies {
+            dependencies: missing,
+        })
+    }
+}
+
+pub fn ensure_sources(missing: Vec<String>) -> Result<(), ImportError> {
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(ImportError::RequireSources { sources: missing })
+    }
 }
 
 /// Trait for an importer.
@@ -470,7 +489,7 @@ impl ImporterFFI {
         let mut result_buf = vec![0; RESULT_BUF_LEN_START];
         let mut result_len = result_buf.len() as u32;
 
-        loop {
+        let result = loop {
             let result = unsafe {
                 (self.import)(
                     self.importer,
@@ -498,108 +517,109 @@ impl ImporterFFI {
                 }
 
                 result_buf.resize(result_len as usize, 0);
-                continue;
             }
+            break result;
+        };
 
-            return match result {
-                SUCCESS => Ok(()),
-                REQUIRE_SOURCES => unsafe {
-                    let mut u32buf = [0; size_of::<u32>()];
+        match result {
+            SUCCESS => Ok(()),
+            REQUIRE_SOURCES => unsafe {
+                let mut u32buf = [0; size_of::<u32>()];
+                std::ptr::copy_nonoverlapping(
+                    result_buf[..size_of::<u32>()].as_ptr(),
+                    u32buf.as_mut_ptr(),
+                    size_of::<u32>(),
+                );
+                let count = u32::from_le_bytes(u32buf);
+
+                let mut offset = size_of::<u32>();
+
+                let mut sources = Vec::new();
+                for _ in 0..count {
                     std::ptr::copy_nonoverlapping(
-                        result_buf[..size_of::<u32>()].as_ptr(),
+                        result_buf[offset..][..size_of::<u32>()].as_ptr(),
                         u32buf.as_mut_ptr(),
                         size_of::<u32>(),
                     );
-                    let count = u32::from_le_bytes(u32buf);
-
-                    let mut offset = size_of::<u32>();
-
-                    let mut sources = Vec::new();
-                    for _ in 0..count {
-                        std::ptr::copy_nonoverlapping(
-                            result_buf[offset..][..size_of::<u32>()].as_ptr(),
-                            u32buf.as_mut_ptr(),
-                            size_of::<u32>(),
-                        );
-                        offset += size_of::<u32>();
-                        let len = u32::from_be_bytes(u32buf);
-                        let mut source = vec![0; len as usize];
-                        std::ptr::copy_nonoverlapping(
-                            result_buf[offset..][..len as usize].as_ptr(),
-                            source.as_mut_ptr(),
-                            len as usize,
-                        );
-                        match String::from_utf8(source) {
+                    offset += size_of::<u32>();
+                    let len = u32::from_le_bytes(u32buf);
+                    let mut source = vec![0; len as usize];
+                    std::ptr::copy_nonoverlapping(
+                        result_buf[offset..][..len as usize].as_ptr(),
+                        source.as_mut_ptr(),
+                        len as usize,
+                    );
+                    offset += len as usize;
+                    match String::from_utf8(source) {
                             Ok(source) => sources.push(source),
                             Err(_) => return Err(ImportError::Other {
                                 reason: "`Importer::import` requires sources, but one of the sources is not UTF-8"
                                     .to_owned(),
                             }),
                         }
-                    }
+                }
 
-                    Err(ImportError::RequireSources { sources })
-                },
-                REQUIRE_DEPENDENCIES => unsafe {
-                    let mut u32buf = [0; size_of::<u32>()];
-                    std::ptr::copy_nonoverlapping(
-                        result_buf[..size_of::<u32>()].as_ptr(),
-                        u32buf.as_mut_ptr(),
-                        size_of::<u32>(),
-                    );
-                    let count = u32::from_le_bytes(u32buf);
+                Err(ImportError::RequireSources { sources })
+            },
+            REQUIRE_DEPENDENCIES => unsafe {
+                let mut u32buf = [0; size_of::<u32>()];
+                std::ptr::copy_nonoverlapping(
+                    result_buf[..size_of::<u32>()].as_ptr(),
+                    u32buf.as_mut_ptr(),
+                    size_of::<u32>(),
+                );
+                let count = u32::from_le_bytes(u32buf);
+                let mut offset = size_of::<u32>();
 
-                    let mut offset = size_of::<u32>();
+                let mut dependencies = Vec::new();
+                for _ in 0..count {
+                    let mut decode_string = || {
+                        std::ptr::copy_nonoverlapping(
+                            result_buf[offset..][..size_of::<u32>()].as_ptr(),
+                            u32buf.as_mut_ptr(),
+                            size_of::<u32>(),
+                        );
+                        offset += size_of::<u32>();
+                        let len = u32::from_le_bytes(u32buf);
 
-                    let mut dependencies = Vec::new();
-                    for _ in 0..count {
-                        let mut decode_string = || {
-                            std::ptr::copy_nonoverlapping(
-                                result_buf[offset..][..size_of::<u32>()].as_ptr(),
-                                u32buf.as_mut_ptr(),
-                                size_of::<u32>(),
-                            );
-                            offset += size_of::<u32>();
-                            let len = u32::from_be_bytes(u32buf);
+                        let mut string = vec![0; len as usize];
+                        std::ptr::copy_nonoverlapping(
+                            result_buf[offset..][..len as usize].as_ptr(),
+                            string.as_mut_ptr(),
+                            len as usize,
+                        );
+                        offset += len as usize;
 
-                            let mut string = vec![0; len as usize];
-                            std::ptr::copy_nonoverlapping(
-                                result_buf[offset..][..len as usize].as_ptr(),
-                                string.as_mut_ptr(),
-                                len as usize,
-                            );
-
-                            match String::from_utf8(string) {
+                        match String::from_utf8(string) {
                                 Ok(string) => Ok(string),
                                 Err(_) => return Err(ImportError::Other { reason: "`Importer::import` requires dependencies, but one of the strings is not UTF-8".to_owned() }),
                             }
-                        };
+                    };
 
-                        let source = decode_string()?;
-                        let target = decode_string()?;
+                    let source = decode_string()?;
+                    let target = decode_string()?;
 
-                        dependencies.push(Dependency { source, target });
-                    }
-
-                    Err(ImportError::RequireDependencies { dependencies })
-                },
-                OTHER_ERROR => {
-                    debug_assert!(result_len <= result_buf.len() as u32);
-
-                    let error = &result_buf[..result_len as usize];
-                    let error_lossy = String::from_utf8_lossy(error);
-
-                    Err(ImportError::Other {
-                        reason: error_lossy.into_owned(),
-                    })
+                    dependencies.push(Dependency { source, target });
                 }
-                _ => Err(ImportError::Other {
-                    reason: format!(
-                        "Unexpected return code from `Importer::import` FFI: {}",
-                        result
-                    ),
-                }),
-            };
+
+                Err(ImportError::RequireDependencies { dependencies })
+            },
+            OTHER_ERROR => {
+                debug_assert!(result_len <= result_buf.len() as u32);
+
+                let error = &result_buf[..result_len as usize];
+                let error_lossy = String::from_utf8_lossy(error);
+
+                Err(ImportError::Other {
+                    reason: error_lossy.into_owned(),
+                })
+            }
+            _ => Err(ImportError::Other {
+                reason: format!(
+                    "Unexpected return code from `Importer::import` FFI: {}",
+                    result
+                ),
+            }),
         }
     }
 }
@@ -610,7 +630,7 @@ impl ImporterFFI {
 #[macro_export]
 macro_rules! make_treasury_importers_library {
     ($(
-        $([$( $ext:ident ),* $(,)?])? $name:ident : $format:ident -> $target:ident = $importer:expr;
+        $([$( $ext:ident ),* $(,)?])? $($name:ident).+ : $($format:ident).+ -> $($target:ident).+ = $importer:expr;
     )*) => {
         #[no_mangle]
         pub static TREASURY_DYLIB_MAGIC: u32 = $crate::MAGIC;
@@ -627,7 +647,7 @@ macro_rules! make_treasury_importers_library {
             $(
                 cap -= 1;
                 if cap > 0 {
-                    core::ptr::write(buffer.add(len as usize), $crate::ImporterFFI::new($importer, ::core::stringify!($name), ::core::stringify!($format), ::core::stringify!($target), &[ $($(::core::stringify!($ext)),*)? ]));
+                    core::ptr::write(buffer.add(len as usize), $crate::ImporterFFI::new($importer, ::core::stringify!($($name).+), ::core::stringify!($($format).+), ::core::stringify!($($target).+), &[ $($(::core::stringify!($ext)),*)? ]));
                 }
                 len += 1;
             )*

@@ -25,6 +25,7 @@ const TREASURY_META_NAME: &'static str = "Treasury.toml";
 const DEFAULT_AUX: &'static str = "treasury";
 const DEFAULT_ARTIFACTS: &'static str = "artifacts";
 const DEFAULT_EXTERNAL: &'static str = "external";
+const MAX_ITEM_ATTEMPTS: u32 = 1024;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct TreasuryInfo {
@@ -225,62 +226,80 @@ impl Treasury {
         let external = &self.external;
         let importers = &self.importers;
 
-        let mut queue = VecDeque::new();
-        queue.push_back((source, format.map(str::to_owned), target.to_owned()));
+        struct StackItem {
+            source: Url,
+            format: Option<String>,
+            target: String,
+            attempt: u32,
+        }
+
+        let mut stack = Vec::new();
+        stack.push(StackItem {
+            source,
+            format: format.map(str::to_owned),
+            target: target.to_owned(),
+            attempt: 0,
+        });
 
         loop {
-            let (source, format, target) = queue.back().unwrap();
+            // tokio::time::sleep(Duration::from_secs(1)).await;
 
-            let mut meta = SourceMeta::new(source, &self.base, &self.external)
+            let item = stack.last_mut().unwrap();
+            item.attempt += 1;
+
+            let mut meta = SourceMeta::new(&item.source, &self.base, &self.external)
                 .wrap_err("Failed to fetch source meta")?;
 
-            if let Some(asset) = meta.get_asset(target) {
+            if let Some(asset) = meta.get_asset(&item.target) {
                 tracing::debug!(
                     "'{}' '{:?}' '{}' was already imported",
-                    source,
-                    format,
-                    target
+                    item.source,
+                    item.format,
+                    item.target
                 );
 
-                queue.pop_back().unwrap();
-                if queue.is_empty() {
+                stack.pop().unwrap();
+                if stack.is_empty() {
                     return Ok(asset.id());
                 }
                 continue;
             }
 
-            let importer = match format {
-                None => importers.guess(url_ext(&source), target)?,
-                Some(format) => importers.get(format, target),
+            let importer = match &item.format {
+                None => importers.guess(url_ext(&item.source), &item.target)?,
+                Some(format) => importers.get(format, &item.target),
             };
 
             let importer = importer.ok_or_else(|| {
                 eyre::eyre!(
                     "Failed to find importer '{} -> {}' for asset '{}'",
-                    format.as_deref().unwrap_or("<undefined>"),
-                    target,
-                    source,
+                    item.format.as_deref().unwrap_or("<undefined>"),
+                    item.target,
+                    item.source,
                 )
             })?;
 
             // let format = importer.format();
 
             // Fetch source file.
-            let source_path = sources.fetch(&mut temporaries, source).await?.to_owned();
+            let source_path = sources
+                .fetch(&mut temporaries, &item.source)
+                .await?
+                .to_owned();
             let output_path = temporaries.make_temporary();
 
             let result = importer.import(
                 &source_path,
                 &output_path,
                 |src: &str| {
-                    let src = source.join(src).ok()?;
+                    let src = item.source.join(src).ok()?;
                     // If parsing fails - source will be listed in `ImportResult::RequireSources`
                     // it will fail there again, aborting importing process.
                     // Otherwise it was not important ^_^
                     sources.get(&src)
                 },
                 |src: &str, target: &str| {
-                    let src = source.join(src).ok()?;
+                    let src = item.source.join(src).ok()?;
 
                     match SourceMeta::new(&src, base, external) {
                         Ok(meta) => {
@@ -300,14 +319,23 @@ impl Treasury {
                 Err(ImportError::Other { reason }) => {
                     return Err(eyre::eyre!(
                         "Failed to import {}:{}->{}. {}",
-                        source,
+                        item.source,
                         importer.format(),
-                        target,
+                        item.target,
                         reason,
                     ))
                 }
                 Err(ImportError::RequireSources { sources: srcs }) => {
-                    let source = source.clone();
+                    if item.attempt >= MAX_ITEM_ATTEMPTS {
+                        return Err(eyre::eyre!(
+                            "Failed to import {}:{}->{}. Too many attempts",
+                            item.source,
+                            importer.format(),
+                            item.target,
+                        ));
+                    }
+
+                    let source = item.source.clone();
                     for src in srcs {
                         match source.join(&src) {
                             Err(err) => {
@@ -326,7 +354,16 @@ impl Treasury {
                     continue;
                 }
                 Err(ImportError::RequireDependencies { dependencies }) => {
-                    let source = source.clone();
+                    if item.attempt >= MAX_ITEM_ATTEMPTS {
+                        return Err(eyre::eyre!(
+                            "Failed to import {}:{}->{}. Too many attempts",
+                            item.source,
+                            importer.format(),
+                            item.target,
+                        ));
+                    }
+
+                    let source = item.source.clone();
                     for dep in dependencies.into_iter() {
                         match source.join(&dep.source) {
                             Err(err) => {
@@ -338,7 +375,12 @@ impl Treasury {
                                 ))
                             }
                             Ok(url) => {
-                                queue.push_back((url, None, dep.target));
+                                stack.push(StackItem {
+                                    source: url,
+                                    format: None,
+                                    target: dep.target,
+                                    attempt: 0,
+                                });
                             }
                         };
                     }
@@ -367,11 +409,11 @@ impl Treasury {
             let asset = AssetMeta::new(new_id, &output_path, artifacts)
                 .wrap_err("Failed to prepare new asset")?;
 
-            let (_url, _format, target) = queue.pop_back().unwrap();
+            let item = stack.pop().unwrap();
 
-            meta.add_asset(target, asset, base, external)?;
+            meta.add_asset(item.target, asset, base, external)?;
 
-            if queue.is_empty() {
+            if stack.is_empty() {
                 return Ok(new_id);
             }
         }
@@ -427,19 +469,30 @@ impl Treasury {
     }
 
     /// Fetch asset data path.
-    pub fn find_asset(&self, source: &str, target: &str) -> eyre::Result<Option<AssetId>> {
-        let source = self.base_url.join(source).wrap_err_with(|| {
+    pub async fn find_asset(&self, source: &str, target: &str) -> eyre::Result<Option<AssetId>> {
+        let source_url = self.base_url.join(source).wrap_err_with(|| {
             format!(
                 "Failed to construct URL from base '{}' and source '{}'",
                 self.base_url, source
             )
         })?;
 
-        let meta = SourceMeta::new(&source, &self.base, &self.external)
+        let meta = SourceMeta::new(&source_url, &self.base, &self.external)
             .wrap_err("Failed to fetch source meta")?;
 
         match meta.get_asset(target) {
-            None => Ok(None),
+            None => match self.store(source, None, target).await {
+                Err(err) => {
+                    tracing::warn!(
+                        "Failed to store '{}' as '{}' on lookup. {:#}",
+                        source,
+                        target,
+                        err
+                    );
+                    Ok(None)
+                }
+                Ok(id) => Ok(Some(id)),
+            },
             Some(asset) => Ok(Some(asset.id())),
         }
     }
@@ -510,8 +563,8 @@ fn scan_external(
                                                 err
                                             );
                                         }
-                                        Ok(mut meta) => {
-                                            for asset in meta.assets_mut() {
+                                        Ok(meta) => {
+                                            for asset in meta.assets() {
                                                 if !existing_artifacts.contains_key(&asset.id()) {
                                                     artifacts.push((
                                                         asset.id(),

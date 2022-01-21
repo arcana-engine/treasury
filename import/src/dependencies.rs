@@ -1,10 +1,29 @@
 use treasury_id::AssetId;
 
-use crate::{NOT_FOUND, NOT_UTF8, SUCCESS};
+use crate::{Dependency, NOT_FOUND, NOT_UTF8, SUCCESS};
 
 pub trait Dependencies {
     /// Returns dependency id.
     fn get(&self, source: &str, target: &str) -> Result<Option<AssetId>, String>;
+
+    fn get_or_append(
+        &self,
+        source: &str,
+        target: &str,
+        missing: &mut Vec<Dependency>,
+    ) -> Result<Option<AssetId>, String> {
+        match self.get(source, target) {
+            Err(err) => Err(err),
+            Ok(Some(id)) => Ok(Some(id)),
+            Ok(None) => {
+                missing.push(Dependency {
+                    source: source.to_owned(),
+                    target: target.to_owned(),
+                });
+                Ok(None)
+            }
+        }
+    }
 }
 
 #[repr(transparent)]
@@ -85,7 +104,7 @@ impl Dependencies for DependenciesFFI {
         };
 
         match result {
-            SUCCESS => match AssetId::new(0) {
+            SUCCESS => match AssetId::new(id) {
                 None => Err(format!("Null AssetId returned from `Dependencies::get`")),
                 Some(id) => Ok(Some(id)),
             },

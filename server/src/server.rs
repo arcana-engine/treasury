@@ -246,7 +246,7 @@ async fn try_serve(
                 },
             },
             Some(Request::FindAsset { source, target }) => {
-                match treasury.find_asset(&source, &target) {
+                match treasury.find_asset(&source, &target).await {
                     Err(err) => {
                         send_message(
                             &mut stream,

@@ -51,20 +51,11 @@ impl LowerHex for HashSha256 {
             f.write_str("0x")?;
         }
 
-        for chunk in self.bytes.chunks(16) {
-            match chunk.len() {
-                0..=15 => {
-                    for byte in chunk {
-                        write!(f, "{:x}", byte)?;
-                    }
-                }
-                16 => {
-                    let v = u128::from_be_bytes(chunk.try_into().unwrap());
-                    write!(f, "{:x}", v)?;
-                }
-                _ => unreachable!(),
-            }
-        }
+        let v = u128::from_be_bytes(self.bytes[0..16].try_into().unwrap());
+        write!(f, "{:x}", v)?;
+        let v = u128::from_be_bytes(self.bytes[16..32].try_into().unwrap());
+        write!(f, "{:x}", v)?;
+
         Ok(())
     }
 }
@@ -75,20 +66,11 @@ impl UpperHex for HashSha256 {
             f.write_str("0X")?;
         }
 
-        for chunk in self.bytes.chunks(16) {
-            match chunk.len() {
-                0..=15 => {
-                    for byte in chunk {
-                        write!(f, "{:X}", byte)?;
-                    }
-                }
-                16 => {
-                    let v = u128::from_be_bytes(chunk.try_into().unwrap());
-                    write!(f, "{:X}", v)?;
-                }
-                _ => unreachable!(),
-            }
-        }
+        let v = u128::from_be_bytes(self.bytes[0..16].try_into().unwrap());
+        write!(f, "{:X}", v)?;
+        let v = u128::from_be_bytes(self.bytes[16..32].try_into().unwrap());
+        write!(f, "{:X}", v)?;
+
         Ok(())
     }
 }
@@ -149,6 +131,7 @@ impl Serialize for HashSha256 {
         if serializer.is_human_readable() {
             let mut hex = [0u8; 64];
             write!(std::io::Cursor::new(&mut hex[..]), "{:x}", self).expect("Must fit");
+            debug_assert!(hex.is_ascii());
             let hex = std::str::from_utf8(&hex).expect("Must be UTF-8");
             serializer.serialize_str(hex)
         } else {

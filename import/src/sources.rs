@@ -19,6 +19,21 @@ use crate::{
 pub trait Sources {
     /// Get data from specified source.
     fn get(&self, source: &str) -> Result<Option<PathBuf>, String>;
+
+    fn get_or_append(
+        &self,
+        source: &str,
+        missing: &mut Vec<String>,
+    ) -> Result<Option<PathBuf>, String> {
+        match self.get(source) {
+            Err(err) => Err(err),
+            Ok(Some(path)) => Ok(Some(path)),
+            Ok(None) => {
+                missing.push(source.to_owned());
+                Ok(None)
+            }
+        }
+    }
 }
 
 #[repr(transparent)]

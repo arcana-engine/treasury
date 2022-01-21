@@ -41,9 +41,9 @@ impl DylibImporter {
         self.ffi.import(source, output, &sources, &dependencies)
     }
 
-    // pub fn name(&self) -> &str {
-    //     self.ffi.name().unwrap_or("<Non-UTF8 name>")
-    // }
+    pub fn name(&self) -> &str {
+        self.ffi.name().unwrap_or("<Non-UTF8 name>")
+    }
 
     pub fn format(&self) -> &str {
         self.ffi.format().unwrap()

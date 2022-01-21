@@ -191,9 +191,9 @@ impl SourceMeta {
         let (meta_path, is_external) = get_meta_path(source, base, external)?;
 
         if is_external {
-            SourceMeta::open_external(&meta_path)
+            SourceMeta::new_external(&meta_path, source)
         } else {
-            SourceMeta::open_local(&meta_path)
+            SourceMeta::new_local(&meta_path)
         }
     }
 
@@ -201,16 +201,86 @@ impl SourceMeta {
         meta_path.extension().map_or(false, |e| e == EXTENSION)
     }
 
+    pub fn new_local(meta_path: &Path) -> eyre::Result<SourceMeta> {
+        SourceMeta::read_local(meta_path, true)
+    }
+
     pub fn open_local(meta_path: &Path) -> eyre::Result<SourceMeta> {
+        SourceMeta::read_local(meta_path, false)
+    }
+
+    fn read_local(meta_path: &Path, allow_missing: bool) -> eyre::Result<Self> {
         let source_path = meta_path.with_extension("");
         let url = Url::from_file_path(&source_path)
             .map_err(|()| UrlFromPathError { path: source_path })?;
-        let meta = SourceMeta::read_from(url, &meta_path)?;
-        Ok(meta)
+
+        match std::fs::read(meta_path) {
+            Err(err) if allow_missing && err.kind() == std::io::ErrorKind::NotFound => {
+                Ok(SourceMeta {
+                    url,
+                    assets: HashMap::new(),
+                })
+            }
+            Err(err) => Err(FileError {
+                error: err,
+                path: meta_path.to_owned(),
+            })
+            .wrap_err("Meta read failed"),
+            Ok(data) => {
+                let assets = toml::from_slice(&data)
+                    .map_err(|err| FileError {
+                        error: err,
+                        path: meta_path.to_owned(),
+                    })
+                    .wrap_err("Meta read failed")?;
+                Ok(SourceMeta { url, assets })
+            }
+        }
+    }
+
+    pub fn new_external(meta_path: &Path, source: &Url) -> eyre::Result<SourceMeta> {
+        match std::fs::read(meta_path) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(SourceMeta {
+                url: source.clone(),
+                assets: HashMap::new(),
+            }),
+            Err(err) => Err(FileError {
+                error: err,
+                path: meta_path.to_owned(),
+            })
+            .wrap_err("Meta read failed"),
+            Ok(data) => {
+                let assets = toml::from_slice(&data)
+                    .map_err(|err| FileError {
+                        error: err,
+                        path: meta_path.to_owned(),
+                    })
+                    .wrap_err("Meta read failed")?;
+                Ok(SourceMeta {
+                    url: source.clone(),
+                    assets,
+                })
+            }
+        }
     }
 
     pub fn open_external(meta_path: &Path) -> eyre::Result<SourceMeta> {
-        SourceMeta::read_with_url_from(&meta_path)
+        match std::fs::read(meta_path) {
+            Err(err) => Err(FileError {
+                error: err,
+                path: meta_path.to_owned(),
+            })
+            .wrap_err("Meta read failed"),
+            Ok(data) => {
+                let meta = toml::from_slice(&data)
+                    .map_err(|err| FileError {
+                        error: err,
+                        path: meta_path.to_owned(),
+                    })
+                    .wrap_err("Meta read failed")?;
+                Ok(meta)
+            }
+        }
     }
 
     pub fn get_asset(&self, target: &str) -> Option<&AssetMeta> {
@@ -219,6 +289,10 @@ impl SourceMeta {
 
     pub fn assets_mut(&mut self) -> impl Iterator<Item = &mut AssetMeta> + '_ {
         self.assets.values_mut()
+    }
+
+    pub fn assets(&self) -> impl Iterator<Item = &AssetMeta> + '_ {
+        self.assets.values()
     }
 
     pub fn add_asset(
@@ -277,38 +351,6 @@ impl SourceMeta {
             .wrap_err("Meta write failed")?;
         Ok(())
     }
-
-    fn read_from(url: Url, path: &Path) -> eyre::Result<Self> {
-        let data = std::fs::read(path)
-            .map_err(|err| FileError {
-                error: err,
-                path: path.to_owned(),
-            })
-            .wrap_err("Meta read failed")?;
-        let assets = toml::from_slice(&data)
-            .map_err(|err| FileError {
-                error: err,
-                path: path.to_owned(),
-            })
-            .wrap_err("Meta read failed")?;
-        Ok(SourceMeta { url, assets })
-    }
-
-    fn read_with_url_from(path: &Path) -> eyre::Result<Self> {
-        let data = std::fs::read(path)
-            .map_err(|err| FileError {
-                error: err,
-                path: path.to_owned(),
-            })
-            .wrap_err("Meta read failed")?;
-        let meta = toml::from_slice(&data)
-            .map_err(|err| FileError {
-                error: err,
-                path: path.to_owned(),
-            })
-            .wrap_err("Meta read failed")?;
-        Ok(meta)
-    }
 }
 
 fn files_eq(lhs: &Path, rhs: &Path) -> std::io::Result<bool> {
@@ -357,14 +399,6 @@ fn get_meta_path(source: &Url, base: &Path, external: &Path) -> eyre::Result<(Pa
                     filename.push(DOT_EXTENSION);
 
                     let path = path.with_file_name(filename);
-
-                    if !path.exists() {
-                        let meta = SourceMeta {
-                            url: source.clone(),
-                            assets: HashMap::new(),
-                        };
-                        meta.write_to(&path)?;
-                    }
                     return Ok((path, false));
                 }
             }
@@ -386,20 +420,11 @@ fn get_meta_path(source: &Url, base: &Path, external: &Path) -> eyre::Result<(Pa
         match path.metadata() {
             Err(_) => {
                 // Not exists. Let's try to occupy.
-
-                let meta = SourceMeta {
-                    url: source.clone(),
-                    assets: HashMap::new(),
-                };
-
-                meta.write_with_url_to(&path)
-                    .wrap_err("Failed to save new source meta")?;
-
                 Ok(Some((path, true)))
             }
             Ok(md) => {
                 if md.is_file() {
-                    match SourceMeta::read_with_url_from(&path) {
+                    match SourceMeta::open_external(&path) {
                         Err(_) => {
                             tracing::error!(
                                 "Failed to open existing source metadata at '{}'",

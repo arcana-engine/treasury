@@ -91,7 +91,10 @@ impl Importers {
 
         let map = self.map.get(target);
         match map {
-            None => Ok(None),
+            None => {
+                tracing::debug!("No importers to '{}' found", target);
+                Ok(None)
+            }
             Some(map) => match ext {
                 None => match map.len() {
                     0 => {
@@ -120,7 +123,17 @@ impl Importers {
                             tracing::debug!("No importers to '{}' found", target);
                             Ok(None)
                         }
-                        1 => Ok(map.get(formats[0])),
+                        1 => {
+                            let format = formats[0];
+                            let importer = &map[format];
+                            tracing::debug!(
+                                "Found exact match '{}' -> '{}' : '{}'",
+                                format,
+                                target,
+                                importer.name(),
+                            );
+                            Ok(Some(importer))
+                        }
                         _ => {
                             tracing::debug!("Multiple importers to '{}' found", target);
                             Err(CannotDecideOnImporter {
@@ -166,11 +179,11 @@ impl Importer {
         }
     }
 
-    // pub fn name(&self) -> &str {
-    //     match self {
-    //         Importer::DylibImporter(importer) => importer.name(),
-    //     }
-    // }
+    pub fn name(&self) -> &str {
+        match self {
+            Importer::DylibImporter(importer) => importer.name(),
+        }
+    }
 
     pub fn format(&self) -> &str {
         match self {

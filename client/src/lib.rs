@@ -26,6 +26,7 @@ enum Treasury {
 
 #[derive(Debug)]
 pub struct Client {
+    #[allow(unused)]
     treasury: Treasury,
     stream: BufReader<TcpStream>,
 }
@@ -182,7 +183,10 @@ async fn connect_local() -> eyre::Result<TcpStream> {
     let port = get_port();
 
     match TcpStream::connect((Ipv4Addr::LOCALHOST, port)).await {
-        Ok(stream) => Ok(stream),
+        Ok(stream) => {
+            tracing::info!("Connected to running server");
+            Ok(stream)
+        }
         Err(err) if err.kind() == ErrorKind::ConnectionRefused => {
             tracing::info!("Failed to connect to treasury server. Run provisional instance");
 
