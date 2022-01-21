@@ -4,17 +4,30 @@
 //! # Usage
 //!
 //! ```
-//! use std::path::Path;
-//! use treasury_importer::*;
+//! struct FooImporter;
 //!
-//! impl Importer for MyImporter {
-//!     fn import(&self, source: &Path, output: &Path, treasury: &impl Treasury) -> Result<(), String> {
-//!         todo!("Implement this")
+//! impl treasury_import::Importer for FooImporter {
+//!     fn import(
+//!         &self,
+//!         source: &std::path::Path,
+//!         output: &std::path::Path,
+//!         _sources: &impl treasury_import::Sources,
+//!         _dependencies: &impl treasury_import::Dependencies,
+//!     ) -> Result<(), treasury_import::ImportError> {
+//!         match std::fs::copy(source, output) {
+//!           Ok(_) => Ok(()),
+//!           Err(err) => Err(treasury_import::ImportError::Other { reason: "SOMETHING WENT WRONG".to_owned() }),
+//!         }
 //!     }
 //! }
 //!
-//! make_treasury_importers_library! {
-//!     my_importer : input_format -> target_format : &MyImporter;
+//!
+//! // Define all required exports.
+//! treasury_import::make_treasury_importers_library! {
+//!     // [extensions list]  <name> : <source-format> -> <target-format> = <expr>;
+//!     // <expr> must have type &'static I where I: Importer
+//!     // Use `Box::leak(importer)` if importer instance cannot be constructed in constant expression.
+//!     [foo] foo : foo -> foo = &FooImporter;
 //! }
 //! ```
 
