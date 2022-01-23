@@ -533,6 +533,9 @@ fn scan_external(
     artifacts: &mut Vec<(AssetId, PathBuf)>,
 ) {
     match std::fs::read_dir(&external) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            tracing::info!("External directory does not exists");
+        }
         Err(err) => tracing::error!(
             "Failed to scan directory '{}'. {:#}",
             external.display(),
@@ -592,6 +595,11 @@ fn scan_local(
     artifacts: &mut Vec<(AssetId, PathBuf)>,
 ) {
     debug_assert!(base.is_absolute());
+
+    if !base.exists() {
+        tracing::info!("Local artifacts directory does not exists");
+        return;
+    }
 
     let mut queue = VecDeque::new();
     queue.push_back(base.to_owned());
