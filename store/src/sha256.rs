@@ -52,9 +52,9 @@ impl LowerHex for HashSha256 {
         }
 
         let v = u128::from_be_bytes(self.bytes[0..16].try_into().unwrap());
-        write!(f, "{:x}", v)?;
+        write!(f, "{:032x}", v)?;
         let v = u128::from_be_bytes(self.bytes[16..32].try_into().unwrap());
-        write!(f, "{:x}", v)?;
+        write!(f, "{:032x}", v)?;
 
         Ok(())
     }
@@ -67,9 +67,9 @@ impl UpperHex for HashSha256 {
         }
 
         let v = u128::from_be_bytes(self.bytes[0..16].try_into().unwrap());
-        write!(f, "{:X}", v)?;
+        write!(f, "{:032X}", v)?;
         let v = u128::from_be_bytes(self.bytes[16..32].try_into().unwrap());
-        write!(f, "{:X}", v)?;
+        write!(f, "{:032X}", v)?;
 
         Ok(())
     }
@@ -133,6 +133,14 @@ impl Serialize for HashSha256 {
             write!(std::io::Cursor::new(&mut hex[..]), "{:x}", self).expect("Must fit");
             debug_assert!(hex.is_ascii());
             let hex = std::str::from_utf8(&hex).expect("Must be UTF-8");
+
+            if hex.ends_with('\u{0000}') {
+                panic!(
+                    "Converting '{:x}' to hex failed. Last bytes are {:x}{:x}{:x}",
+                    self, self.bytes[29], self.bytes[30], self.bytes[31]
+                );
+            }
+
             serializer.serialize_str(hex)
         } else {
             serializer.serialize_bytes(&self.bytes)
