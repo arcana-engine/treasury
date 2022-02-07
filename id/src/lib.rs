@@ -3,8 +3,8 @@ use std::{
     fmt::{self, Debug, Display, LowerHex, UpperHex},
     num::{NonZeroU64, ParseIntError},
     str::FromStr,
-    sync::atomic::{AtomicU16, Ordering},
-    time::SystemTime,
+    sync::Mutex,
+    time::{Duration, SystemTime},
 };
 
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
@@ -133,38 +133,61 @@ pub struct AssetIdContext {
     node: u16,
 
     /// Counter first 12 bits of which are used for ID generation.
-    counter: AtomicU16,
+    data: Mutex<ContextSyncData>,
+}
+
+struct ContextSyncData {
+    counter: u16,
+    last_timestamp: u64,
 }
 
 impl AssetIdContext {
-    pub const fn new(epoch: SystemTime, node: u16) -> Self {
+    pub fn new(epoch: SystemTime, node: u16) -> Self {
+        assert!(epoch <= SystemTime::now());
+
         AssetIdContext {
             epoch,
             node: node & 0x3FF,
-            counter: AtomicU16::new(0),
+            data: Mutex::new(ContextSyncData {
+                counter: 0,
+                last_timestamp: 0,
+            }),
         }
     }
 
     /// Generate new ID.
     pub fn generate(&self) -> AssetId {
-        let timestamp = SystemTime::now()
-            .duration_since(self.epoch)
-            .expect("Epoch must be in relatively distant past")
-            .as_millis() as u64;
+        loop {
+            let timestamp = SystemTime::now()
+                .duration_since(self.epoch)
+                .expect("Epoch must be in relatively distant past")
+                .as_millis() as u64;
 
-        let node = self.node as u64;
+            let mut guard = self.data.lock().unwrap();
 
-        let mut counter = self.counter.fetch_add(1, Ordering::Relaxed) as u64;
+            if guard.last_timestamp > timestamp {
+                panic!("Time goes backwards");
+            }
 
-        while counter & 0xFFF == 0 {
-            // Single loop is expected once per 4096 id generated.
-            // Multiple loop is highly improbable
-            counter = self.counter.fetch_add(1, Ordering::Relaxed) as u64;
+            if guard.last_timestamp == timestamp {
+                if guard.counter == 0xFFF {
+                    // That's too fast. Throttle.
+                    std::thread::sleep(Duration::from_millis(1));
+                    continue;
+                }
+
+                guard.counter += 1;
+            } else {
+                guard.counter = 1;
+            }
+
+            let counter = guard.counter as u64;
+
+            let node = self.node as u64;
+            let id = (timestamp << 22) | (node << 12) | counter;
+            let id = NonZeroU64::new(id.wrapping_mul(ID_MUL)).expect("Zero id cannot be generated");
+            return AssetId(id);
         }
-
-        let id = (timestamp << 22) | (node << 12) | (counter & 0xFFF);
-        let id = NonZeroU64::new(id.wrapping_mul(ID_MUL)).expect("Zero id cannot be generated");
-        AssetId(id)
     }
 }
 
