@@ -75,25 +75,23 @@ impl UpperHex for HashSha256 {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum ParseHashError {
-    #[error(transparent)]
-    ParseIntError(#[from] ParseIntError),
-
-    #[error("Failed to parse hex hash value. Not enough digits")]
-    NotEnoughDigits,
-}
-
 impl FromStr for HashSha256 {
-    type Err = ParseHashError;
-    fn from_str(mut s: &str) -> Result<Self, ParseHashError> {
+    type Err = ParseIntError;
+    fn from_str(s: &str) -> Result<Self, ParseIntError> {
         let mut bytes = [0; 32];
-        for chunk in bytes.chunks_mut(16) {
-            let value =
-                u128::from_str_radix(s.get(0..32).ok_or(ParseHashError::NotEnoughDigits)?, 16)?;
-            s = &s[32..];
-            chunk.copy_from_slice(&value.to_be_bytes());
+
+        let l = s.len();
+        if l > 32 {
+            let upper = u128::from_str_radix(&s[..l - 32], 16)?;
+            let lower = u128::from_str_radix(&s[l - 32..], 16)?;
+
+            bytes[0..16].copy_from_slice(&upper.to_be_bytes());
+            bytes[16..32].copy_from_slice(&lower.to_be_bytes());
+        } else {
+            let lower = u128::from_str_radix(s, 16)?;
+            bytes[16..32].copy_from_slice(&lower.to_be_bytes());
         }
+
         Ok(HashSha256 { bytes })
     }
 }
@@ -131,16 +129,7 @@ impl Serialize for HashSha256 {
         if serializer.is_human_readable() {
             let mut hex = [0u8; 64];
             write!(std::io::Cursor::new(&mut hex[..]), "{:x}", self).expect("Must fit");
-            debug_assert!(hex.is_ascii());
             let hex = std::str::from_utf8(&hex).expect("Must be UTF-8");
-
-            if hex.ends_with('\u{0000}') {
-                panic!(
-                    "Converting '{:x}' to hex failed. Last bytes are {:x}{:x}{:x}",
-                    self, self.bytes[29], self.bytes[30], self.bytes[31]
-                );
-            }
-
             serializer.serialize_str(hex)
         } else {
             serializer.serialize_bytes(&self.bytes)
