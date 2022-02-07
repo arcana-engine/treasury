@@ -1,20 +1,20 @@
 [package]
 name = "treasury-client"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 authors = ["Zakarum <zakarumych@ya.ru>"]
 license = "MIT OR Apache-2.0"
 documentation = "https://docs.rs/treasury-client"
-homepage = "https://github.com/zakarumych/treasury"
-repository = "https://github.com/zakarumych/treasury"
+homepage = "https://github.com/arcana-engine/treasury"
+repository = "https://github.com/arcana-engine/treasury"
 readme = "../README.md"
 keywords = ["assets", "gamedev"]
 categories = ["game-development"]
 description = "Client for treasury"
 
 [dependencies]
-treasury-api = { version = "0.0.0", path = "../api" }
-treasury-id = { version = "0.0.0", path = "../id" }
+treasury-api = { version = "=0.1.0", path = "../api" }
+treasury-id = { version = "=0.1.0", path = "../id" }
 
 url = { version = "2.2", features = ["serde"] }
 tracing = "0.1"

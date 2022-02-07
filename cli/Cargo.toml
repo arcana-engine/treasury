@@ -1,19 +1,23 @@
 [package]
 name = "treasury-cli"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 authors = ["Zakarum <zakarumych@ya.ru>"]
 license = "MIT OR Apache-2.0"
 documentation = "https://docs.rs/treasury-cli"
-homepage = "https://github.com/zakarumych/treasury"
-repository = "https://github.com/zakarumych/treasury"
+homepage = "https://github.com/arcana-engine/treasury"
+repository = "https://github.com/arcana-engine/treasury"
 readme = "../README.md"
 keywords = ["assets", "gamedev", "cli"]
 categories = ["game-development", "command-line-utilities"]
 description = "Command Line Interface for treasury client"
 
+[[bin]]
+name = "treasury"
+path = "src/main.rs"
+
 [dependencies]
-treasury-client = { version = "0.0.0", path = "../client" }
+treasury-client = { version = "=0.1.0", path = "../client" }
 
 url = "2.0"
 eyre = "0.6"

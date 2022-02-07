@@ -1,20 +1,20 @@
 [package]
 name = "treasury-store"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 authors = ["Zakarum <zakarumych@ya.ru>"]
 license = "MIT OR Apache-2.0"
 documentation = "https://docs.rs/treasury-store"
-homepage = "https://github.com/zakarumych/treasury"
-repository = "https://github.com/zakarumych/treasury"
+homepage = "https://github.com/arcana-engine/treasury"
+repository = "https://github.com/arcana-engine/treasury"
 readme = "../README.md"
 keywords = ["assets", "gamedev"]
 categories = ["game-development"]
 description = "Treasury storage"
 
 [dependencies]
-treasury-import = { version = "0.0.0", path = "../import", default-features = false }
-treasury-id = { version = "0.0.0", path = "../id" }
+treasury-import = { version = "=0.1.0", path = "../import", default-features = false }
+treasury-id = { version = "=0.1.0", path = "../id" }
 
 rand = "0.8"
 hashbrown = { version = "0.12", features = ["serde"] }

@@ -1,21 +1,21 @@
 [package]
 name = "treasury-server"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 authors = ["Zakarum <zakarumych@ya.ru>"]
 license = "MIT OR Apache-2.0"
 documentation = "https://docs.rs/treasury-server"
-homepage = "https://github.com/zakarumych/treasury"
-repository = "https://github.com/zakarumych/treasury"
+homepage = "https://github.com/arcana-engine/treasury"
+repository = "https://github.com/arcana-engine/treasury"
 readme = "../README.md"
 keywords = ["assets", "gamedev"]
 categories = ["game-development"]
 description = "Treasury server"
 
 [dependencies]
-treasury-api = { version = "0.0.0", path = "../api" }
-treasury-store = { version = "0.0.0", path = "../store" }
-treasury-id = { version = "0.0.0", path = "../id" }
+treasury-api = { version = "=0.1.0", path = "../api" }
+treasury-store = { version = "=0.1.0", path = "../store" }
+treasury-id = { version = "=0.1.0", path = "../id" }
 
 url = { version = "2.2", features = ["serde"] }
 eyre = "0.6"

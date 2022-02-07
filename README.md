@@ -31,19 +31,17 @@ Table of contents
 
 ## :computer: Installation
 
-:construction: Not yet released.
+Applications provided by treasury can be installed with `cargo`.
 
-<!-- Applications provided by treasury can be installed with `cargo`.
-
-To install server run
+To install `treasury-server` run
 ```sh
 cargo install treasury-server
 ```
 
-To install command line tool
+To install `treasury` command line tool
 ```sh
 cargo install treasury-cli
-``` -->
+``` 
 
 ## :hand: Usage
 
@@ -215,10 +213,9 @@ treasury_import::make_treasury_importers_library! {
 }
 ```
 
-Artifacts should always use `AssetId` to refer to dependencies.
-Asset source file can contain path (relative to source file or absolute) or URL.
-`Importer::import` takes a reference to a function that can converted path or URL and known target to `AssetId`.
-If dependency is not found, `ImportResult::RequireDependencies
+Artifacts produced by import process should always use `AssetId` to refer to dependencies.
+Asset source file can contain path (relative to source file or absolute) or URL, which can be easily converted to `AssetId` by `Dependencies`.
+If dependency is not found, `ImportResult::RequireDependencies { ... }` should be returned. Storing procedure will attempt to store dependencies and retry import.
 
 ## What is missing?
 
