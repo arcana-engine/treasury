@@ -24,7 +24,7 @@ impl Serialize for AssetId {
 
         if serializer.is_human_readable() {
             let mut hex = [0u8; 16];
-            write!(std::io::Cursor::new(&mut hex[..]), "{:x}", self.0).expect("Must fit");
+            write!(std::io::Cursor::new(&mut hex[..]), "{:016x}", self.0).expect("Must fit");
             let hex = std::str::from_utf8(&hex).expect("Must be UTF-8");
             serializer.serialize_str(hex)
         } else {
