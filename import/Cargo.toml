@@ -10,6 +10,7 @@ repository = "https://github.com/zakarumych/treasury"
 readme = "../README.md"
 keywords = ["assets", "gamedev"]
 categories = ["game-development"]
+description = "FFI for treasury importers"
 
 [dependencies]
 treasury-id = { version = "0.0.0", path = "../id" }

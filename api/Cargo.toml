@@ -8,6 +8,9 @@ documentation = "https://docs.rs/treasury-api"
 homepage = "https://github.com/zakarumych/treasury"
 repository = "https://github.com/zakarumych/treasury"
 readme = "../README.md"
+keywords = ["assets", "gamedev"]
+categories = ["game-development"]
+description = "API for treasury server"
 
 [dependencies]
 treasury-id = { version = "0.0.0", path = "../id" }

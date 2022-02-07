@@ -10,6 +10,7 @@ repository = "https://github.com/zakarumych/treasury"
 readme = "../README.md"
 keywords = ["assets", "gamedev"]
 categories = ["game-development"]
+description = "ID generator for treasury"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

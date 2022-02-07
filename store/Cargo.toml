@@ -10,17 +10,18 @@ repository = "https://github.com/zakarumych/treasury"
 readme = "../README.md"
 keywords = ["assets", "gamedev"]
 categories = ["game-development"]
+description = "Treasury storage"
 
 [dependencies]
 treasury-import = { version = "0.0.0", path = "../import", default-features = false }
 treasury-id = { version = "0.0.0", path = "../id" }
 
 rand = "0.8"
-hashbrown = { version = "0.11", features = ["serde"] }
+hashbrown = { version = "0.12", features = ["serde"] }
 tinyvec = "1.0"
 smallvec = { version = "1.0", features = ["union", "serde"] }
 
-sha2 = "0.9"
+sha2 = "0.10"
 url = { version = "2.2", features = ["serde"] }
 eyre = "0.6"
 thiserror = "1.0"
@@ -43,4 +44,4 @@ tracing-error = "0.2"
 dunce = "1.0"
 libloading = "0.7"
 bytemuck = "1.0"
-parking_lot = "0.11"
+parking_lot = "0.12"
