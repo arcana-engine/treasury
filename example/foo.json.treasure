@@ -1,0 +1,6 @@
+[foo]
+id = 'd989355183f6830d'
+sha256 = 'bbe8e9a86be651f9efc8e8df7fb76999d8e9a4a9674df9be8de24f4fb3d872a2'
+
+[foo.sources]
+"foo.json" = 1644595965201105400

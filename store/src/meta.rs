@@ -3,43 +3,47 @@ use std::{
     error::Error,
     fs::File,
     io::{Read, Seek, SeekFrom},
+    mem,
     path::{Path, PathBuf},
+    time::{Duration, SystemTime},
 };
 
 use eyre::WrapErr;
-use hashbrown::{hash_map::Entry, HashMap};
+use hashbrown::HashMap;
 use treasury_id::AssetId;
 use url::Url;
 
-use crate::sha256::HashSha256;
+use crate::{scheme::Scheme, sha256::HashSha256};
 
 const PREFIX_STARTING_LEN: usize = 8;
 const EXTENSION: &'static str = "treasure";
 const DOT_EXTENSION: &'static str = ".treasure";
-
-/// Data attached to single asset source.
-/// It may include several assets.
-/// If attached to external source outside treasury directory
-/// then it is stored together with artifacts by URL hash.
-#[derive(serde::Serialize, serde::Deserialize)]
-pub struct SourceMeta {
-    url: Url,
-    assets: HashMap<String, AssetMeta>,
-}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct AssetMeta {
     id: AssetId,
     sha256: HashSha256,
 
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    format: Option<String>,
+
     #[serde(skip_serializing_if = "prefix_is_default", default = "default_prefix")]
     prefix: usize,
 
     #[serde(skip_serializing_if = "suffix_is_zero", default)]
-    suffix: usize,
+    suffix: u64,
+
+    // URLs to source files.
+    // Relative paths are relative to treasury base.
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+    sources: HashMap<String, u64>,
+
+    // Array of dependencies of this asset.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    dependencies: Vec<AssetId>,
 
     #[serde(skip)]
-    artifact_path: RefCell<Option<PathBuf>>,
+    artifact_path_cache: RefCell<Option<PathBuf>>,
 }
 
 fn prefix_is_default(prefix: &usize) -> bool {
@@ -50,12 +54,25 @@ fn default_prefix() -> usize {
     PREFIX_STARTING_LEN
 }
 
-fn suffix_is_zero(suffix: &usize) -> bool {
+fn suffix_is_zero(suffix: &u64) -> bool {
     *suffix == 0
 }
 
 impl AssetMeta {
-    pub fn new(id: AssetId, output: &Path, artifacts: &Path) -> eyre::Result<Self> {
+    /// Creates new asset metadata.
+    /// Puts ouput to the artifacs directory.
+    /// Called when new asset is imported.
+    ///
+    /// `output` contain temporary path to imported asset artifact.
+    /// `artifacts` is path to artifact directory.
+    pub fn new(
+        id: AssetId,
+        mut format: Option<String>,
+        sources: Vec<(String, SystemTime)>,
+        mut dependencies: Vec<AssetId>,
+        output: &Path,
+        artifacts: &Path,
+    ) -> eyre::Result<Self> {
         let sha256 = HashSha256::file_hash(output).wrap_err_with(|| {
             format!(
                 "Failed to calculate hash of the file '{}'",
@@ -68,6 +85,7 @@ impl AssetMeta {
         with_path_candidates(&hex, artifacts, move |prefix, suffix, path| {
             match path.metadata() {
                 Err(_) => {
+                    // Artifact file does not exists.
                     // This is the most common case.
                     std::fs::rename(output, &path).wrap_err_with(|| {
                         format!(
@@ -79,10 +97,24 @@ impl AssetMeta {
 
                     Ok(Some(AssetMeta {
                         id,
+                        format: format.take(),
                         sha256,
                         prefix,
                         suffix,
-                        artifact_path: RefCell::new(Some(path)),
+                        sources: sources
+                            .iter()
+                            .map(|(source, modified)| {
+                                (
+                                    source.clone(),
+                                    modified
+                                        .duration_since(SystemTime::UNIX_EPOCH)
+                                        .unwrap()
+                                        .as_nanos() as u64,
+                                )
+                            })
+                            .collect(),
+                        dependencies: mem::take(&mut dependencies),
+                        artifact_path_cache: RefCell::new(Some(path)),
                     }))
                 }
                 Ok(meta) if meta.is_file() => {
@@ -107,17 +139,36 @@ impl AssetMeta {
 
                         Ok(Some(AssetMeta {
                             id,
+                            format: format.take(),
                             sha256,
                             prefix,
                             suffix,
-                            artifact_path: RefCell::new(Some(path)),
+                            sources: sources
+                                .iter()
+                                .map(|(source, modified)| {
+                                    (
+                                        source.clone(),
+                                        modified
+                                            .duration_since(SystemTime::UNIX_EPOCH)
+                                            .unwrap()
+                                            .as_nanos()
+                                            as u64,
+                                    )
+                                })
+                                .collect(),
+                            dependencies: mem::take(&mut dependencies),
+                            artifact_path_cache: RefCell::new(Some(path)),
                         }))
                     } else {
+                        // Prefixes are the same.
+                        // Try longer prefix.
                         tracing::debug!("Artifact path collision");
                         Ok(None)
                     }
                 }
                 Ok(_) => {
+                    // Path is occupied by directory.
+                    // This should never be caused by treasury itself.
                     tracing::warn!(
                         "Artifacts storage occupied by non-file entity '{}'",
                         path.display()
@@ -132,12 +183,69 @@ impl AssetMeta {
         self.id
     }
 
-    // pub fn hash(&self) -> &HashSha256 {
-    //     &self.sha256
-    // }
+    pub fn format(&self) -> Option<&str> {
+        self.format.as_deref()
+    }
 
+    pub fn needs_reimport(&self, base: &Url) -> bool {
+        for (url, modified) in &self.sources {
+            let url = match base.join(url) {
+                Err(err) => {
+                    tracing::error!(
+                        "Failed to figure out source URL from base: {} and source: {}. {:#}. Asset can be outdated",
+                        base,
+                        url,
+                        err,
+                    );
+                    continue;
+                }
+                Ok(url) => url,
+            };
+
+            let source_modified = SystemTime::UNIX_EPOCH + Duration::from_nanos(*modified);
+
+            match url.scheme().parse() {
+                Ok(Scheme::File) => {
+                    let path = match url.to_file_path() {
+                        Err(()) => {
+                            tracing::error!("Invalid file URL");
+                            continue;
+                        }
+                        Ok(path) => path,
+                    };
+
+                    let modified = match path.metadata().and_then(|meta| meta.modified()) {
+                        Err(err) => {
+                            tracing::error!(
+                                "Failed to check how new the source file is. {:#}",
+                                err
+                            );
+                            continue;
+                        }
+                        Ok(modified) => modified,
+                    };
+
+                    if modified < source_modified {
+                        tracing::warn!("Source file is older than when asset was imported. Could be clock change. Reimort just in case");
+                        return true;
+                    }
+
+                    if modified > source_modified {
+                        tracing::debug!("Source file was updated");
+                        return true;
+                    }
+                }
+                Ok(Scheme::Data) => continue,
+                Err(_) => tracing::error!("Unsupported scheme: '{}'", url.scheme()),
+            }
+        }
+
+        false
+    }
+
+    /// Returns path to the artifact.
     pub fn artifact_path(&self, artifacts: &Path) -> PathBuf {
-        let mut artifact_path = self.artifact_path.borrow_mut();
+        let mut artifact_path = self.artifact_path_cache.borrow_mut();
 
         if artifact_path.is_none() {
             let path = self.make_artifact_path(artifacts);
@@ -153,7 +261,7 @@ impl AssetMeta {
 
     fn make_artifact_path(&self, artifacts: &Path) -> PathBuf {
         let hex = format!("{:x}", self.sha256);
-        let prefix = &hex[..self.prefix as usize];
+        let prefix = &hex[..self.prefix];
 
         match self.suffix {
             0 => artifacts.join(prefix),
@@ -184,6 +292,16 @@ struct FileError<E: Error> {
     path: PathBuf,
 }
 
+/// Data attached to single asset source.
+/// It may include several assets.
+/// If attached to external source outside treasury directory
+/// then it is stored together with artifacts by URL hash.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct SourceMeta {
+    url: Url,
+    assets: HashMap<String, AssetMeta>,
+}
+
 impl SourceMeta {
     /// Finds and returns meta for the source URL.
     /// Creates new file if needed.
@@ -195,6 +313,10 @@ impl SourceMeta {
         } else {
             SourceMeta::new_local(&meta_path)
         }
+    }
+
+    pub fn url(&self) -> &Url {
+        &self.url
     }
 
     pub fn is_local_meta_path(meta_path: &Path) -> bool {
@@ -287,12 +409,8 @@ impl SourceMeta {
         self.assets.get(target)
     }
 
-    pub fn assets_mut(&mut self) -> impl Iterator<Item = &mut AssetMeta> + '_ {
-        self.assets.values_mut()
-    }
-
-    pub fn assets(&self) -> impl Iterator<Item = &AssetMeta> + '_ {
-        self.assets.values()
+    pub fn assets(&self) -> impl Iterator<Item = (&str, &AssetMeta)> + '_ {
+        self.assets.iter().map(|(target, meta)| (&**target, meta))
     }
 
     pub fn add_asset(
@@ -302,14 +420,7 @@ impl SourceMeta {
         base: &Path,
         external: &Path,
     ) -> eyre::Result<()> {
-        match self.assets.entry(target) {
-            Entry::Vacant(entry) => {
-                entry.insert(asset);
-            }
-            Entry::Occupied(_) => {
-                panic!("Asset already exists");
-            }
-        }
+        self.assets.insert(target, asset);
 
         let (meta_path, is_external) = get_meta_path(&self.url, base, external)?;
         if is_external {
@@ -447,11 +558,12 @@ fn get_meta_path(source: &Url, base: &Path, external: &Path) -> eyre::Result<(Pa
 fn with_path_candidates<T, E>(
     hex: &str,
     base: &Path,
-    mut f: impl FnMut(usize, usize, PathBuf) -> Result<Option<T>, E>,
+    mut f: impl FnMut(usize, u64, PathBuf) -> Result<Option<T>, E>,
 ) -> Result<T, E> {
+    use std::fmt::Write;
+
     for len in PREFIX_STARTING_LEN..=hex.len() {
-        let name = &hex[..len];
-        let path = base.join(name);
+        let path = base.join(&hex[..len]);
 
         match f(len, 0, path) {
             Ok(None) => {}
@@ -460,9 +572,14 @@ fn with_path_candidates<T, E>(
         }
     }
 
-    for suffix in 0usize.. {
-        let name = format!("{}:{}", hex, suffix);
-        let path = base.join(name);
+    // Rarely needed.
+    let mut name = hex.to_owned();
+
+    for suffix in 0u64.. {
+        name.truncate(hex.len());
+        write!(name, ":{}", suffix).unwrap();
+
+        let path = base.join(&name);
 
         match f(hex.len(), suffix, path) {
             Ok(None) => {}

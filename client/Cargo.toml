@@ -1,6 +1,6 @@
 [package]
 name = "treasury-client"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Zakarum <zakarumych@ya.ru>"]
 license = "MIT OR Apache-2.0"
@@ -13,7 +13,7 @@ categories = ["game-development"]
 description = "Client for treasury"
 
 [dependencies]
-treasury-api = { version = "=0.1.0", path = "../api" }
+treasury-api = { version = "=0.2.0", path = "../api" }
 treasury-id = { version = "=0.1.0", path = "../id" }
 
 url = { version = "2.2", features = ["serde"] }

@@ -1,6 +1,6 @@
 [package]
 name = "treasury-server"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Zakarum <zakarumych@ya.ru>"]
 license = "MIT OR Apache-2.0"
@@ -13,8 +13,8 @@ categories = ["game-development"]
 description = "Treasury server"
 
 [dependencies]
-treasury-api = { version = "=0.1.0", path = "../api" }
-treasury-store = { version = "=0.1.0", path = "../store" }
+treasury-api = { version = "=0.2.0", path = "../api" }
+treasury-store = { version = "=0.2.0", path = "../store" }
 treasury-id = { version = "=0.1.0", path = "../id" }
 
 url = { version = "2.2", features = ["serde"] }

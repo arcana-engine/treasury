@@ -19,7 +19,7 @@ use treasury_api::{
     get_port, recv_handshake, recv_message, send_message, FetchUrlResponse, FindResponse,
     OpenRequest, OpenResponse, Request, StoreResponse,
 };
-use treasury_store::Treasury;
+use treasury_store::{Treasury, TreasuryInfo, TREASURY_META_NAME};
 use url::Url;
 
 use crate::Config;
@@ -168,8 +168,12 @@ async fn try_serve(
         Entry::Vacant(entry) => {
             let path = Path::new(&*open.path);
             let result = if open.init {
-                Treasury::init_in(path, None, None, None, &[])
-                    .wrap_err("Failed to initialize treasury")
+                let info = TreasuryInfo::default();
+                info.write(&path.join(TREASURY_META_NAME))
+                    .wrap_err("Failed to save new treasury info")
+                    .and_then(|()| {
+                        Treasury::new(path, info).wrap_err("Failed to initialize treasury")
+                    })
             } else {
                 Treasury::find_from(path).wrap_err("Failed to find treasury")
             };
@@ -207,7 +211,16 @@ async fn try_serve(
                 format,
                 target,
             }) => match treasury.store(&source, format.as_deref(), &target).await {
-                Ok(id) => send_message(&mut stream, StoreResponse::Success { id }).await?,
+                Ok((id, path)) => {
+                    send_message(
+                        &mut stream,
+                        StoreResponse::Success {
+                            id,
+                            path: path.display().to_string().into_boxed_str(),
+                        },
+                    )
+                    .await?
+                }
                 Err(err) => {
                     send_message(
                         &mut stream,
@@ -218,7 +231,7 @@ async fn try_serve(
                     .await?
                 }
             },
-            Some(Request::FetchUrl { id }) => match treasury.fetch(id) {
+            Some(Request::FetchUrl { id }) => match treasury.fetch(id).await {
                 None => send_message(&mut stream, FetchUrlResponse::NotFound).await?,
                 Some(path) => match Url::from_file_path(&path) {
                     Ok(url) => {
@@ -258,7 +271,16 @@ async fn try_serve(
                         .await?
                     }
                     Ok(None) => send_message(&mut stream, FindResponse::NotFound).await?,
-                    Ok(Some(id)) => send_message(&mut stream, FindResponse::Success { id }).await?,
+                    Ok(Some((id, path))) => {
+                        send_message(
+                            &mut stream,
+                            FindResponse::Success {
+                                id,
+                                path: path.display().to_string().into_boxed_str(),
+                            },
+                        )
+                        .await?
+                    }
                 }
             }
         }

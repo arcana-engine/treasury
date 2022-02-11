@@ -169,8 +169,8 @@ impl Importer {
         dependencies: D,
     ) -> Result<(), ImportError>
     where
-        S: Fn(&str) -> Option<&'a Path> + 'a,
-        D: Fn(&str, &str) -> Option<AssetId>,
+        S: FnMut(&str) -> Option<&'a Path> + 'a,
+        D: FnMut(&str, &str) -> Option<AssetId>,
     {
         match self {
             Importer::DylibImporter(importer) => {

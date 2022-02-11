@@ -5,7 +5,7 @@ use std::{
 };
 
 use eyre::WrapErr;
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use importer::Importers;
 use meta::{AssetMeta, SourceMeta};
 use parking_lot::RwLock;
@@ -17,42 +17,77 @@ use url::Url;
 
 mod importer;
 mod meta;
+mod scheme;
 mod sha256;
 mod sources;
 mod temp;
 
-const TREASURY_META_NAME: &'static str = "Treasury.toml";
+pub const TREASURY_META_NAME: &'static str = "Treasury.toml";
+
 const DEFAULT_AUX: &'static str = "treasury";
 const DEFAULT_ARTIFACTS: &'static str = "artifacts";
 const DEFAULT_EXTERNAL: &'static str = "external";
 const MAX_ITEM_ATTEMPTS: u32 = 1024;
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct TreasuryInfo {
+pub struct TreasuryInfo {
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    artifacts: Option<PathBuf>,
+    pub artifacts: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    external: Option<PathBuf>,
+    pub external: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    temp: Option<PathBuf>,
+    pub temp: Option<PathBuf>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    importers: Vec<PathBuf>,
+    pub importers: Vec<PathBuf>,
 }
 
-fn write_treasury_info(meta: &TreasuryInfo, path: &Path) -> eyre::Result<()> {
-    let meta = toml::to_string_pretty(meta).wrap_err("Failed to serialize metadata")?;
-    std::fs::write(path, &meta)
-        .wrap_err_with(|| format!("Failed to write metadata file '{}'", path.display()))?;
-    Ok(())
+impl Default for TreasuryInfo {
+    fn default() -> Self {
+        TreasuryInfo::new(None, None, None, &[])
+    }
 }
 
-fn read_treasury_info(path: &Path) -> eyre::Result<TreasuryInfo> {
-    let err_ctx = || format!("Failed to read metadata file '{}'", path.display());
+impl TreasuryInfo {
+    pub fn write(&self, path: &Path) -> eyre::Result<()> {
+        let meta = toml::to_string_pretty(self).wrap_err("Failed to serialize metadata")?;
+        std::fs::write(path, &meta)
+            .wrap_err_with(|| format!("Failed to write metadata file '{}'", path.display()))?;
+        Ok(())
+    }
 
-    let meta = std::fs::read(path).wrap_err_with(err_ctx)?;
-    let meta: TreasuryInfo = toml::from_slice(&meta).wrap_err_with(err_ctx)?;
+    pub fn read(path: &Path) -> eyre::Result<Self> {
+        let err_ctx = || format!("Failed to read metadata file '{}'", path.display());
 
-    Ok(meta)
+        let meta = std::fs::read(path).wrap_err_with(err_ctx)?;
+        let meta: TreasuryInfo = toml::from_slice(&meta).wrap_err_with(err_ctx)?;
+        Ok(meta)
+    }
+
+    pub fn new(
+        artifacts: Option<&Path>,
+        external: Option<&Path>,
+        temp: Option<&Path>,
+        importers: &[&Path],
+    ) -> Self {
+        let artifacts = artifacts.map(Path::to_owned);
+        let external = external.map(Path::to_owned);
+        let temp = temp.map(Path::to_owned);
+        let importers = importers.iter().copied().map(|p| p.to_owned()).collect();
+
+        TreasuryInfo {
+            artifacts,
+            external,
+            temp,
+            importers,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct AssetItem {
+    source: String,
+    format: Option<String>,
+    target: String,
 }
 
 pub struct Treasury {
@@ -64,55 +99,11 @@ pub struct Treasury {
     temp: PathBuf,
     importers: Importers,
 
-    artifacts: RwLock<HashMap<AssetId, PathBuf>>,
+    artifacts: RwLock<HashMap<AssetId, AssetItem>>,
     scanned: RwLock<bool>,
 }
 
 impl Treasury {
-    #[tracing::instrument]
-    pub fn init() -> eyre::Result<Self> {
-        let cwd = std::env::current_dir().wrap_err("Failed to get current directory")?;
-        Treasury::init_in(&cwd, None, None, None, &[])
-    }
-
-    #[tracing::instrument]
-    pub fn init_in(
-        base: &Path,
-        artifacts: Option<&Path>,
-        external: Option<&Path>,
-        temp: Option<&Path>,
-        importers: &[&Path],
-    ) -> eyre::Result<Self> {
-        eyre::ensure!(
-            base.is_dir(),
-            "Failed to initialize treasury at '{}'. Not a directory",
-            base.display()
-        );
-
-        let meta_path = base.join(TREASURY_META_NAME);
-        eyre::ensure!(
-            !meta_path.exists(),
-            "Failed to initialize treasury at '{}', '{}' already exists",
-            base.display(),
-            meta_path.display(),
-        );
-
-        let artifacts = artifacts.map(Path::to_owned);
-        let external = external.map(Path::to_owned);
-        let temp = temp.map(Path::to_owned);
-        let importers = importers.iter().copied().map(|p| p.to_owned()).collect();
-
-        let meta = TreasuryInfo {
-            artifacts,
-            external,
-            temp,
-            importers,
-        };
-
-        write_treasury_info(&meta, &meta_path)?;
-        Treasury::open(&meta_path)
-    }
-
     /// Find and open treasury in ancestors of specified directory.
     #[tracing::instrument]
     pub fn find_from(path: &Path) -> eyre::Result<Self> {
@@ -136,13 +127,16 @@ impl Treasury {
     /// Open treasury database at specified path.
     #[tracing::instrument]
     pub fn open(path: &Path) -> eyre::Result<Self> {
-        let path = dunce::canonicalize(path).wrap_err_with(|| {
-            eyre::eyre!("Failed to canonicalize base path '{}'", path.display())
-        })?;
-
-        let meta = read_treasury_info(&path)?;
-
+        let meta = TreasuryInfo::read(path)?;
         let base = path.parent().unwrap().to_owned();
+
+        Self::new(&base, meta)
+    }
+
+    pub fn new(base: &Path, meta: TreasuryInfo) -> eyre::Result<Self> {
+        let base = dunce::canonicalize(base).wrap_err_with(|| {
+            eyre::eyre!("Failed to canonicalize base path '{}'", base.display())
+        })?;
         let base_url = Url::from_directory_path(&base)
             .map_err(|()| eyre::eyre!("'{}' is invalid base path", base.display()))?;
 
@@ -210,7 +204,7 @@ impl Treasury {
         source: &str,
         format: Option<&str>,
         target: &str,
-    ) -> eyre::Result<AssetId> {
+    ) -> eyre::Result<(AssetId, PathBuf)> {
         let source = self.base_url.join(source).wrap_err_with(|| {
             format!(
                 "Failed to construct URL from base '{}' and source '{}'",
@@ -227,10 +221,24 @@ impl Treasury {
         let importers = &self.importers;
 
         struct StackItem {
+            /// Source URL.
             source: Url,
+
+            /// Source format name.
             format: Option<String>,
+
+            /// Target format name.
             target: String,
+
+            /// Attempt counter to break infinite loops.
             attempt: u32,
+
+            /// Sources requested by importer.
+            /// Relative to `source`.
+            sources: HashMap<Url, SystemTime>,
+
+            /// Dependencies requested by importer.
+            dependencies: HashSet<AssetId>,
         }
 
         let mut stack = Vec::new();
@@ -239,6 +247,8 @@ impl Treasury {
             format: format.map(str::to_owned),
             target: target.to_owned(),
             attempt: 0,
+            sources: HashMap::new(),
+            dependencies: HashSet::new(),
         });
 
         loop {
@@ -251,18 +261,27 @@ impl Treasury {
                 .wrap_err("Failed to fetch source meta")?;
 
             if let Some(asset) = meta.get_asset(&item.target) {
-                tracing::debug!(
-                    "'{}' '{:?}' '{}' was already imported",
-                    item.source,
-                    item.format,
-                    item.target
-                );
+                if asset.needs_reimport(&self.base_url) {
+                    tracing::debug!(
+                        "'{}' '{:?}' '{}' reimporting",
+                        item.source,
+                        item.format,
+                        item.target
+                    );
+                } else {
+                    tracing::debug!(
+                        "'{}' '{:?}' '{}' was already imported",
+                        item.source,
+                        item.format,
+                        item.target
+                    );
 
-                stack.pop().unwrap();
-                if stack.is_empty() {
-                    return Ok(asset.id());
+                    stack.pop().unwrap();
+                    if stack.is_empty() {
+                        return Ok((asset.id(), asset.artifact_path(&self.artifacts_base)));
+                    }
+                    continue;
                 }
-                continue;
             }
 
             let importer = match &item.format {
@@ -279,24 +298,22 @@ impl Treasury {
                 )
             })?;
 
-            // let format = importer.format();
-
             // Fetch source file.
-            let source_path = sources
-                .fetch(&mut temporaries, &item.source)
-                .await?
-                .to_owned();
+            let (source_path, modified) = sources.fetch(&mut temporaries, &item.source).await?;
+            let source_path = source_path.to_owned();
+
             let output_path = temporaries.make_temporary();
 
             let result = importer.import(
                 &source_path,
                 &output_path,
                 |src: &str| {
-                    let src = item.source.join(src).ok()?;
-                    // If parsing fails - source will be listed in `ImportResult::RequireSources`
-                    // it will fail there again, aborting importing process.
-                    // Otherwise it was not important ^_^
-                    sources.get(&src)
+                    let src = item.source.join(src).ok()?; // If parsing fails - source will be listed in `ImportResult::RequireSources`.
+                    let (path, modified) = sources.get(&src)?;
+                    if let Some(modified) = modified {
+                        item.sources.insert(src, modified);
+                    }
+                    Some(path)
                 },
                 |src: &str, target: &str| {
                     let src = item.source.join(src).ok()?;
@@ -304,6 +321,7 @@ impl Treasury {
                     match SourceMeta::new(&src, base, external) {
                         Ok(meta) => {
                             let asset = meta.get_asset(target)?;
+                            item.dependencies.insert(asset.id());
                             Some(asset.id())
                         }
                         Err(err) => {
@@ -346,9 +364,7 @@ impl Treasury {
                                     err,
                                 ))
                             }
-                            Ok(url) => {
-                                sources.fetch(&mut temporaries, &url).await?;
-                            }
+                            Ok(url) => sources.fetch(&mut temporaries, &url).await?,
                         };
                     }
                     continue;
@@ -380,6 +396,8 @@ impl Treasury {
                                     format: None,
                                     target: dep.target,
                                     attempt: 0,
+                                    sources: HashMap::new(),
+                                    dependencies: HashSet::new(),
                                 });
                             }
                         };
@@ -406,70 +424,90 @@ impl Treasury {
 
             let new_id = self.id_ctx.generate();
 
-            let asset = AssetMeta::new(new_id, &output_path, artifacts)
-                .wrap_err("Failed to prepare new asset")?;
-
             let item = stack.pop().unwrap();
+
+            let make_relative_source = |source| match self.base_url.make_relative(source) {
+                None => item.source.to_string(),
+                Some(source) => source,
+            };
+
+            let mut sources = Vec::new();
+            if let Some(modified) = modified {
+                sources.push((make_relative_source(&item.source), modified));
+            }
+            sources.extend(
+                item.sources
+                    .iter()
+                    .map(|(url, modified)| (make_relative_source(url), *modified)),
+            );
+
+            let asset = AssetMeta::new(
+                new_id,
+                item.format,
+                sources,
+                item.dependencies.into_iter().collect(),
+                &output_path,
+                artifacts,
+            )
+            .wrap_err("Failed to prepare new asset")?;
+
+            let artifact_path = asset.artifact_path(artifacts);
 
             meta.add_asset(item.target, asset, base, external)?;
 
             if stack.is_empty() {
-                return Ok(new_id);
+                return Ok((new_id, artifact_path));
             }
         }
     }
 
     /// Fetch asset data path.
-    pub fn fetch(&self, id: AssetId) -> Option<PathBuf> {
-        let scanned = self.scanned.read();
-        if *scanned {
-            self.artifacts.read().get(&id).cloned()
-        } else {
-            drop(scanned);
+    pub async fn fetch(&self, id: AssetId) -> Option<PathBuf> {
+        let scanned = *self.scanned.read();
 
-            let artifacts = self.artifacts.read();
-            if artifacts.contains_key(&id) {
-                artifacts.get(&id).cloned()
-            } else {
-                let mut new_artifacts = Vec::new();
-                let mut scanned = self.scanned.write();
+        if !scanned {
+            let existing_artifacts: HashSet<_> = self.artifacts.read().keys().copied().collect();
 
-                if *scanned {
-                    artifacts.get(&id).cloned()
-                } else {
-                    scan_local(
-                        &self.base,
-                        &self.artifacts_base,
-                        &artifacts,
-                        &mut new_artifacts,
-                    );
-                    scan_external(
-                        &self.external,
-                        &self.artifacts_base,
-                        &artifacts,
-                        &mut new_artifacts,
-                    );
+            let mut new_artifacts = Vec::new();
+            let mut scanned = self.scanned.write();
 
-                    drop(artifacts);
-                    let mut artifacts = self.artifacts.write();
-                    for (new_id, path) in new_artifacts {
-                        artifacts.insert(new_id, path);
-                    }
+            if !*scanned {
+                scan_local(
+                    &self.base,
+                    &self.base_url,
+                    &existing_artifacts,
+                    &mut new_artifacts,
+                );
+                scan_external(&self.external, &existing_artifacts, &mut new_artifacts);
 
-                    *scanned = true;
-                    let path = artifacts.get(&id).cloned();
-
-                    drop(artifacts);
-                    drop(scanned);
-
-                    path
+                let mut artifacts = self.artifacts.write();
+                for (id, item) in new_artifacts {
+                    artifacts.insert(id, item);
                 }
+
+                *scanned = true;
+
+                drop(artifacts);
+                drop(scanned);
             }
         }
+
+        let item = self.artifacts.read().get(&id).cloned()?;
+
+        let (_, path) = self
+            .store(&item.source, item.format.as_deref(), &item.target)
+            .await
+            .ok()?;
+
+        Some(path)
     }
 
     /// Fetch asset data path.
-    pub async fn find_asset(&self, source: &str, target: &str) -> eyre::Result<Option<AssetId>> {
+    pub async fn find_asset(
+        &self,
+        source: &str,
+        target: &str,
+    ) -> eyre::Result<Option<(AssetId, PathBuf)>> {
         let source_url = self.base_url.join(source).wrap_err_with(|| {
             format!(
                 "Failed to construct URL from base '{}' and source '{}'",
@@ -493,7 +531,10 @@ impl Treasury {
                 }
                 Ok(id) => Ok(Some(id)),
             },
-            Some(asset) => Ok(Some(asset.id())),
+            Some(asset) => Ok(Some((
+                asset.id(),
+                asset.artifact_path(&self.artifacts_base),
+            ))),
         }
     }
 }
@@ -528,60 +569,66 @@ fn url_ext(url: &Url) -> Option<&str> {
 
 fn scan_external(
     external: &Path,
-    artifacts_base: &Path,
-    existing_artifacts: &HashMap<AssetId, PathBuf>,
-    artifacts: &mut Vec<(AssetId, PathBuf)>,
+    existing_artifacts: &HashSet<AssetId>,
+    artifacts: &mut Vec<(AssetId, AssetItem)>,
 ) {
-    match std::fs::read_dir(&external) {
+    let dir = match std::fs::read_dir(&external) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             tracing::info!("External directory does not exists");
+            return;
         }
-        Err(err) => tracing::error!(
-            "Failed to scan directory '{}'. {:#}",
-            external.display(),
-            err
-        ),
-        Ok(dir) => {
-            for e in dir {
-                match e {
-                    Err(err) => tracing::error!(
-                        "Failed to read entry in directory '{}'. {:#}",
-                        external.display(),
-                        err,
-                    ),
-                    Ok(e) => {
-                        let name = e.file_name();
-                        let path = external.join(&name);
-                        match e.file_type() {
-                            Err(err) => {
-                                tracing::error!("Failed to check '{}'. {:#}", path.display(), err)
-                            }
-                            Ok(ft) => match () {
-                                () if ft.is_file() && !SourceMeta::is_local_meta_path(&path) => {
-                                    match SourceMeta::open_external(&path) {
-                                        Err(err) => {
-                                            tracing::error!(
-                                                "Failed to scan meta file '{}'. {:#}",
-                                                path.display(),
-                                                err
-                                            );
-                                        }
-                                        Ok(meta) => {
-                                            for asset in meta.assets() {
-                                                if !existing_artifacts.contains_key(&asset.id()) {
-                                                    artifacts.push((
-                                                        asset.id(),
-                                                        asset.artifact_path(artifacts_base),
-                                                    ));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            },
-                        }
-                    }
+        Err(err) => {
+            tracing::error!(
+                "Failed to scan directory '{}'. {:#}",
+                external.display(),
+                err
+            );
+            return;
+        }
+        Ok(dir) => dir,
+    };
+    for e in dir {
+        let e = match e {
+            Err(err) => {
+                tracing::error!(
+                    "Failed to read entry in directory '{}'. {:#}",
+                    external.display(),
+                    err,
+                );
+                return;
+            }
+            Ok(e) => e,
+        };
+        let name = e.file_name();
+        let path = external.join(&name);
+        let ft = match e.file_type() {
+            Err(err) => {
+                tracing::error!("Failed to check '{}'. {:#}", path.display(), err);
+                continue;
+            }
+            Ok(ft) => ft,
+        };
+        if ft.is_file() && !SourceMeta::is_local_meta_path(&path) {
+            let meta = match SourceMeta::open_external(&path) {
+                Err(err) => {
+                    tracing::error!("Failed to scan meta file '{}'. {:#}", path.display(), err);
+                    continue;
+                }
+                Ok(meta) => meta,
+            };
+
+            let source = meta.url().to_string();
+
+            for (target, asset) in meta.assets() {
+                if !existing_artifacts.contains(&asset.id()) {
+                    artifacts.push((
+                        asset.id(),
+                        AssetItem {
+                            source: source.clone(),
+                            format: asset.format().map(ToOwned::to_owned),
+                            target: target.to_owned(),
+                        },
+                    ));
                 }
             }
         }
@@ -590,9 +637,9 @@ fn scan_external(
 
 fn scan_local(
     base: &Path,
-    artifacts_base: &Path,
-    existing_artifacts: &HashMap<AssetId, PathBuf>,
-    artifacts: &mut Vec<(AssetId, PathBuf)>,
+    base_url: &Url,
+    existing_artifacts: &HashSet<AssetId>,
+    artifacts: &mut Vec<(AssetId, AssetItem)>,
 ) {
     debug_assert!(base.is_absolute());
 
@@ -605,59 +652,64 @@ fn scan_local(
     queue.push_back(base.to_owned());
 
     while let Some(dir_path) = queue.pop_front() {
-        match std::fs::read_dir(&dir_path) {
-            Err(err) => tracing::error!(
-                "Failed to scan directory '{}'. {:#}",
-                dir_path.display(),
-                err
-            ),
-            Ok(dir) => {
-                for e in dir {
-                    match e {
-                        Err(err) => tracing::error!(
-                            "Failed to read entry in directory '{}'. {:#}",
-                            dir_path.display(),
-                            err,
-                        ),
-                        Ok(e) => {
-                            let name = e.file_name();
-                            let path = dir_path.join(&name);
-                            match e.file_type() {
-                                Err(err) => {
-                                    tracing::error!(
-                                        "Failed to check '{}'. {:#}",
-                                        path.display(),
-                                        err
-                                    )
-                                }
-                                Ok(ft) => match () {
-                                    () if ft.is_dir() => {
-                                        queue.push_back(path);
-                                    }
-                                    () if ft.is_file() && SourceMeta::is_local_meta_path(&path) => {
-                                        match SourceMeta::open_local(&path) {
-                                            Err(err) => {
-                                                tracing::error!(
-                                                    "Failed to scan meta file '{}'. {:#}",
-                                                    path.display(),
-                                                    err
-                                                );
-                                            }
-                                            Ok(mut meta) => {
-                                                for asset in meta.assets_mut() {
-                                                    if !existing_artifacts.contains_key(&asset.id())
-                                                    {
-                                                        artifacts.push((
-                                                            asset.id(),
-                                                            asset.artifact_path(artifacts_base),
-                                                        ));
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    () => {}
-                                },
+        let dir = match std::fs::read_dir(&dir_path) {
+            Err(err) => {
+                tracing::error!(
+                    "Failed to scan directory '{}'. {:#}",
+                    dir_path.display(),
+                    err
+                );
+                continue;
+            }
+            Ok(dir) => dir,
+        };
+        for e in dir {
+            let e = match e {
+                Err(err) => {
+                    tracing::error!(
+                        "Failed to read entry in directory '{}'. {:#}",
+                        dir_path.display(),
+                        err,
+                    );
+                    continue;
+                }
+                Ok(e) => e,
+            };
+            let name = e.file_name();
+            let path = dir_path.join(&name);
+            let ft = match e.file_type() {
+                Err(err) => {
+                    tracing::error!("Failed to check '{}'. {:#}", path.display(), err);
+                    continue;
+                }
+                Ok(ft) => ft,
+            };
+            if ft.is_dir() {
+                queue.push_back(path);
+            } else if ft.is_file() && SourceMeta::is_local_meta_path(&path) {
+                let meta = match SourceMeta::open_local(&path) {
+                    Err(err) => {
+                        tracing::error!("Failed to scan meta file '{}'. {:#}", path.display(), err);
+                        continue;
+                    }
+                    Ok(meta) => meta,
+                };
+
+                match base_url.make_relative(meta.url()) {
+                    None => {
+                        tracing::error!("Local meta is not local to base");
+                    }
+                    Some(source) => {
+                        for (target, asset) in meta.assets() {
+                            if !existing_artifacts.contains(&asset.id()) {
+                                artifacts.push((
+                                    asset.id(),
+                                    AssetItem {
+                                        source: source.clone(),
+                                        format: asset.format().map(ToOwned::to_owned),
+                                        target: target.to_owned(),
+                                    },
+                                ));
                             }
                         }
                     }

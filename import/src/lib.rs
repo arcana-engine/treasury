@@ -158,9 +158,9 @@ type ImporterImportFn = unsafe extern "C" fn(
     source_len: u32,
     output_ptr: *const OsChar,
     output_len: u32,
-    sources: *const sources::SourcesOpaque,
+    sources: *mut sources::SourcesOpaque,
     sources_get: sources::SourcesGetFn,
-    dependencies: *const dependencies::DependenciesOpaque,
+    dependencies: *mut dependencies::DependenciesOpaque,
     dependencies_get: dependencies::DependenciesGetFn,
     result_ptr: *mut u8,
     result_len: *mut u32,
@@ -172,9 +172,9 @@ unsafe extern "C" fn importer_import_ffi<I>(
     source_len: u32,
     output_ptr: *const OsChar,
     output_len: u32,
-    sources: *const sources::SourcesOpaque,
+    sources: *mut sources::SourcesOpaque,
     sources_get: sources::SourcesGetFn,
-    dependencies: *const dependencies::DependenciesOpaque,
+    dependencies: *mut dependencies::DependenciesOpaque,
     dependencies_get: dependencies::DependenciesGetFn,
     result_ptr: *mut u8,
     result_len: *mut u32,
@@ -467,12 +467,12 @@ impl ImporterFFI {
         &self,
         source: &Path,
         output: &Path,
-        sources: &S,
-        dependencies: &D,
+        sources: &mut S,
+        dependencies: &mut D,
     ) -> Result<(), ImportError>
     where
-        S: Fn(&str) -> Option<&'a Path> + 'a,
-        D: Fn(&str, &str) -> Option<AssetId>,
+        S: FnMut(&str) -> Option<&'a Path> + 'a,
+        D: FnMut(&str, &str) -> Option<AssetId>,
     {
         let os_str = source.as_os_str();
 

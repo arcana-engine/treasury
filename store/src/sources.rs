@@ -3,17 +3,18 @@ use std::{
     io::Write,
     mem::size_of_val,
     path::{Path, PathBuf},
+    time::SystemTime,
 };
 
 use eyre::WrapErr;
 use hashbrown::{hash_map::RawEntryMut, HashMap};
 use url::Url;
 
-use crate::temp::Temporaries;
+use crate::{scheme::Scheme, temp::Temporaries};
 
 /// Fetches and caches sources.
 pub struct Sources {
-    feched: HashMap<Url, PathBuf>,
+    feched: HashMap<Url, (PathBuf, bool)>,
 }
 
 impl Sources {
@@ -23,27 +24,45 @@ impl Sources {
         }
     }
 
-    pub fn get(&self, source: &Url) -> Option<&Path> {
-        Some(self.feched.get(source)?)
+    pub fn get(&self, source: &Url) -> Option<(&Path, Option<SystemTime>)> {
+        let (path, local) = self.feched.get(source)?;
+        if *local {
+            let modified = path.metadata().ok()?.modified().ok()?;
+            Some((path, Some(modified)))
+        } else {
+            Some((path, None))
+        }
     }
 
     pub async fn fetch(
         &mut self,
         temporaries: &mut Temporaries<'_>,
         source: &Url,
-    ) -> eyre::Result<&Path> {
+    ) -> eyre::Result<(&Path, Option<SystemTime>)> {
         match self.feched.raw_entry_mut().from_key(&source) {
-            RawEntryMut::Occupied(entry) => Ok(entry.into_mut()),
-            RawEntryMut::Vacant(entry) => match source.scheme() {
-                "file" => {
+            RawEntryMut::Occupied(entry) => {
+                let (path, local) = entry.into_mut();
+                if *local {
+                    let modified = path.metadata()?.modified()?;
+                    Ok((path, Some(modified)))
+                } else {
+                    Ok((path, None))
+                }
+            }
+            RawEntryMut::Vacant(entry) => match source.scheme().parse() {
+                Ok(Scheme::File) => {
                     let path = source
                         .to_file_path()
                         .map_err(|()| eyre::eyre!("Invalid file: URL"))?;
 
+                    let modified = path.metadata()?.modified()?;
+
                     tracing::debug!("Fetching file '{}' ('{}')", source, path.display());
-                    Ok(entry.insert(source.clone(), path).1)
+                    let (_, (path, _)) = entry.insert(source.clone(), (path, true));
+
+                    Ok((path, Some(modified)))
                 }
-                "data" => {
+                Ok(Scheme::Data) => {
                     let data_start = source.as_str()[size_of_val("data:")..]
                         .find(',')
                         .ok_or_else(|| eyre::eyre!("Invalid data URL"))?
@@ -74,9 +93,10 @@ impl Sources {
                         })?;
                     }
 
-                    Ok(entry.insert(source.clone(), temp).1)
+                    let (_, (path, _)) = entry.insert(source.clone(), (temp, false));
+                    Ok((path, None))
                 }
-                schema => Err(eyre::eyre!("Unsupported schema '{}'", schema)),
+                Err(_) => Err(eyre::eyre!("Unsupported scheme '{}'", source.scheme())),
             },
         }
     }

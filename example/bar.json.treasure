@@ -1,0 +1,6 @@
+[foo]
+id = '6cc05afe124be30d'
+sha256 = '9a4dbb343b0ebaf03de1e9be365381c2e08ae53f300311e081626c4449063391'
+
+[foo.sources]
+"bar.json" = 1644612322842679100

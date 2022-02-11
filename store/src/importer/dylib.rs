@@ -31,14 +31,15 @@ impl DylibImporter {
         &self,
         source: &Path,
         output: &Path,
-        sources: S,
-        dependencies: D,
+        mut sources: S,
+        mut dependencies: D,
     ) -> Result<(), ImportError>
     where
-        S: Fn(&str) -> Option<&'a Path> + 'a,
-        D: Fn(&str, &str) -> Option<AssetId>,
+        S: FnMut(&str) -> Option<&'a Path> + 'a,
+        D: FnMut(&str, &str) -> Option<AssetId>,
     {
-        self.ffi.import(source, output, &sources, &dependencies)
+        self.ffi
+            .import(source, output, &mut sources, &mut dependencies)
     }
 
     pub fn name(&self) -> &str {

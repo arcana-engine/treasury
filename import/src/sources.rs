@@ -40,7 +40,7 @@ pub trait Sources {
 pub struct SourcesOpaque(u8);
 
 pub type SourcesGetFn = unsafe extern "C" fn(
-    sources: *const SourcesOpaque,
+    sources: *mut SourcesOpaque,
     source_ptr: *const u8,
     source_len: u32,
     path_ptr: *mut OsChar,
@@ -48,14 +48,14 @@ pub type SourcesGetFn = unsafe extern "C" fn(
 ) -> i32;
 
 unsafe extern "C" fn sources_get_ffi<'a, F>(
-    sources: *const SourcesOpaque,
+    sources: *mut SourcesOpaque,
     source_ptr: *const u8,
     source_len: u32,
     path_ptr: *mut OsChar,
     path_len: *mut u32,
 ) -> i32
 where
-    F: Fn(&str) -> Option<&'a Path> + 'a,
+    F: FnMut(&str) -> Option<&'a Path> + 'a,
 {
     let source =
         match std::str::from_utf8(std::slice::from_raw_parts(source_ptr, source_len as usize)) {
@@ -63,8 +63,8 @@ where
             Err(_) => return NOT_UTF8,
         };
 
-    let f = sources as *const F;
-    let f = &*f;
+    let f = sources as *mut F;
+    let f = &mut *f;
 
     match f(source) {
         None => return NOT_FOUND,
@@ -94,14 +94,14 @@ where
 }
 
 pub struct SourcesFFI {
-    pub opaque: *const SourcesOpaque,
+    pub opaque: *mut SourcesOpaque,
     pub get: SourcesGetFn,
 }
 
 impl SourcesFFI {
-    pub fn new<'a, F>(f: &F) -> Self
+    pub fn new<'a, F>(f: &mut F) -> Self
     where
-        F: Fn(&str) -> Option<&'a Path> + 'a,
+        F: FnMut(&str) -> Option<&'a Path> + 'a,
     {
         SourcesFFI {
             opaque: f as *const F as _,

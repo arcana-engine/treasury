@@ -81,7 +81,7 @@ impl Client {
         source: &Url,
         format: Option<&str>,
         target: &str,
-    ) -> eyre::Result<AssetId> {
+    ) -> eyre::Result<(AssetId, Box<str>)> {
         send_message(
             &mut self.stream,
             Request::Store {
@@ -100,9 +100,9 @@ impl Client {
             None => Err(eyre::eyre!(
                 "Failed to receive response for Store request. Connection lost."
             )),
-            Some(StoreResponse::Success { id }) => {
+            Some(StoreResponse::Success { id, path }) => {
                 tracing::info!("Store requested succeeded");
-                Ok(id)
+                Ok((id, path))
             }
             Some(StoreResponse::Failure { description }) => {
                 Err(eyre::eyre!("Store request failure. {}", description))
@@ -148,7 +148,11 @@ impl Client {
 
     /// Store asset into treasury from specified URL.
     #[tracing::instrument]
-    pub async fn find(&mut self, source: &Url, target: &str) -> eyre::Result<Option<AssetId>> {
+    pub async fn find(
+        &mut self,
+        source: &Url,
+        target: &str,
+    ) -> eyre::Result<Option<(AssetId, Box<str>)>> {
         send_message(
             &mut self.stream,
             Request::FindAsset {
@@ -166,10 +170,10 @@ impl Client {
             None => Err(eyre::eyre!(
                 "Failed to receive response for Find request. Connection lost."
             )),
-            Some(FindResponse::Success { id }) => {
+            Some(FindResponse::Success { id, path }) => {
                 tracing::info!("Find requested succeeded");
 
-                Ok(Some(id))
+                Ok(Some((id, path)))
             }
             Some(FindResponse::Failure { description }) => {
                 Err(eyre::eyre!("Find request failure. {}", description))

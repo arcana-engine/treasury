@@ -150,9 +150,9 @@ fn main() {
                 Err(err) => {
                     eprintln!("{:#}", err);
                 }
-                Ok(id) => {
+                Ok((id, path)) => {
                     println!("Successfully stored asset");
-                    println!("{}", id);
+                    println!("{} @ '{}'", id, path);
                 }
             }
         }

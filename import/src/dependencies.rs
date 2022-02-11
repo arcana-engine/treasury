@@ -30,7 +30,7 @@ pub trait Dependencies {
 pub struct DependenciesOpaque(u8);
 
 pub type DependenciesGetFn = unsafe extern "C" fn(
-    dependencies: *const DependenciesOpaque,
+    dependencies: *mut DependenciesOpaque,
     source_ptr: *const u8,
     source_len: u32,
     target_ptr: *const u8,
@@ -39,7 +39,7 @@ pub type DependenciesGetFn = unsafe extern "C" fn(
 ) -> i32;
 
 unsafe extern "C" fn dependencies_get_ffi<F>(
-    dependencies: *const DependenciesOpaque,
+    dependencies: *mut DependenciesOpaque,
     source_ptr: *const u8,
     source_len: u32,
     target_ptr: *const u8,
@@ -47,7 +47,7 @@ unsafe extern "C" fn dependencies_get_ffi<F>(
     id_ptr: *mut u64,
 ) -> i32
 where
-    F: Fn(&str, &str) -> Option<AssetId>,
+    F: FnMut(&str, &str) -> Option<AssetId>,
 {
     let source =
         match std::str::from_utf8(std::slice::from_raw_parts(source_ptr, source_len as usize)) {
@@ -60,8 +60,8 @@ where
             Err(_) => return NOT_UTF8,
         };
 
-    let f = dependencies as *const F;
-    let f = &*f;
+    let f = dependencies as *mut F;
+    let f = &mut *f;
 
     match f(source, target) {
         None => return NOT_FOUND,
@@ -73,17 +73,17 @@ where
 }
 
 pub struct DependenciesFFI {
-    pub opaque: *const DependenciesOpaque,
+    pub opaque: *mut DependenciesOpaque,
     pub get: DependenciesGetFn,
 }
 
 impl DependenciesFFI {
-    pub fn new<F>(f: &F) -> Self
+    pub fn new<F>(f: &mut F) -> Self
     where
-        F: Fn(&str, &str) -> Option<AssetId>,
+        F: FnMut(&str, &str) -> Option<AssetId>,
     {
         DependenciesFFI {
-            opaque: f as *const F as _,
+            opaque: f as *mut F as _,
             get: dependencies_get_ffi::<F>,
         }
     }

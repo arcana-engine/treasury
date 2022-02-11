@@ -72,7 +72,7 @@ pub enum Request {
 pub enum StoreResponse {
     /// Success.
     /// Payload contains asset id.
-    Success { id: AssetId },
+    Success { id: AssetId, path: Box<str> },
 
     /// Storing process requires to read data from URL, but can't access it from treasury host.
     NeedData { url: Box<str> },
@@ -99,7 +99,7 @@ pub enum FetchUrlResponse {
 pub enum FindResponse {
     /// Success.
     /// Payload contains URL of the artifact.
-    Success { id: AssetId },
+    Success { id: AssetId, path: Box<str> },
 
     /// Asset not found
     NotFound,
