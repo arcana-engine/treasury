@@ -14,7 +14,7 @@ description = "Treasury server"
 
 [dependencies]
 treasury-api = { version = "=0.2.0", path = "../api" }
-treasury-store = { version = "=0.2.0", path = "../store" }
+treasury-store = { version = "=0.2.1", path = "../store" }
 treasury-id = { version = "=0.1.0", path = "../id" }
 
 url = { version = "2.2", features = ["serde"] }
