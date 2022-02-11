@@ -1,5 +1,4 @@
 use std::{
-    cell::RefCell,
     error::Error,
     fs::File,
     io::{Read, Seek, SeekFrom},
@@ -41,9 +40,6 @@ pub struct AssetMeta {
     // Array of dependencies of this asset.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     dependencies: Vec<AssetId>,
-
-    #[serde(skip)]
-    artifact_path_cache: RefCell<Option<PathBuf>>,
 }
 
 fn prefix_is_default(prefix: &usize) -> bool {
@@ -114,7 +110,6 @@ impl AssetMeta {
                             })
                             .collect(),
                         dependencies: mem::take(&mut dependencies),
-                        artifact_path_cache: RefCell::new(Some(path)),
                     }))
                 }
                 Ok(meta) if meta.is_file() => {
@@ -157,7 +152,6 @@ impl AssetMeta {
                                 })
                                 .collect(),
                             dependencies: mem::take(&mut dependencies),
-                            artifact_path_cache: RefCell::new(Some(path)),
                         }))
                     } else {
                         // Prefixes are the same.
@@ -245,21 +239,6 @@ impl AssetMeta {
 
     /// Returns path to the artifact.
     pub fn artifact_path(&self, artifacts: &Path) -> PathBuf {
-        let mut artifact_path = self.artifact_path_cache.borrow_mut();
-
-        if artifact_path.is_none() {
-            let path = self.make_artifact_path(artifacts);
-            *artifact_path = Some(path);
-        } else {
-            debug_assert_eq!(
-                artifact_path.as_ref(),
-                Some(&self.make_artifact_path(artifacts))
-            );
-        }
-        artifact_path.as_ref().unwrap().to_owned()
-    }
-
-    fn make_artifact_path(&self, artifacts: &Path) -> PathBuf {
         let hex = format!("{:x}", self.sha256);
         let prefix = &hex[..self.prefix];
 

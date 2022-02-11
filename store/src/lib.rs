@@ -519,18 +519,21 @@ impl Treasury {
             .wrap_err("Failed to fetch source meta")?;
 
         match meta.get_asset(target) {
-            None => match self.store(source, None, target).await {
-                Err(err) => {
-                    tracing::warn!(
-                        "Failed to store '{}' as '{}' on lookup. {:#}",
-                        source,
-                        target,
-                        err
-                    );
-                    Ok(None)
+            None => {
+                drop(meta);
+                match self.store(source, None, target).await {
+                    Err(err) => {
+                        tracing::warn!(
+                            "Failed to store '{}' as '{}' on lookup. {:#}",
+                            source,
+                            target,
+                            err
+                        );
+                        Ok(None)
+                    }
+                    Ok(id) => Ok(Some(id)),
                 }
-                Ok(id) => Ok(Some(id)),
-            },
+            }
             Some(asset) => Ok(Some((
                 asset.id(),
                 asset.artifact_path(&self.artifacts_base),
