@@ -32,14 +32,14 @@ pub struct AssetMeta {
     #[serde(skip_serializing_if = "suffix_is_zero", default)]
     suffix: u64,
 
+    // Array of dependencies of this asset.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    dependencies: Vec<AssetId>,
+
     // URLs to source files.
     // Relative paths are relative to treasury base.
     #[serde(skip_serializing_if = "HashMap::is_empty", default)]
     sources: HashMap<String, u64>,
-
-    // Array of dependencies of this asset.
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    dependencies: Vec<AssetId>,
 }
 
 fn prefix_is_default(prefix: &usize) -> bool {
