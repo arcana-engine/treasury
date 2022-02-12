@@ -85,7 +85,7 @@ impl TreasuryInfo {
 
 #[derive(Clone)]
 struct AssetItem {
-    source: String,
+    source: Url,
     format: Option<String>,
     target: String,
 }
@@ -212,6 +212,17 @@ impl Treasury {
             )
         })?;
 
+        self.store_url(source, format, target).await
+    }
+
+    /// Import an asset.
+    #[tracing::instrument(skip(self))]
+    pub async fn store_url(
+        &self,
+        source: Url,
+        format: Option<&str>,
+        target: &str,
+    ) -> eyre::Result<(AssetId, PathBuf)> {
         let mut temporaries = Temporaries::new(&self.temp);
         let mut sources = Sources::new();
 
@@ -269,12 +280,12 @@ impl Treasury {
                         item.target
                     );
                 } else {
-                    tracing::debug!(
-                        "'{}' '{:?}' '{}' was already imported",
-                        item.source,
-                        item.format,
-                        item.target
-                    );
+                    match &item.format {
+                        None => tracing::debug!("{} @ '{}'", item.target, item.source),
+                        Some(format) => {
+                            tracing::debug!("{} as {} @ '{}'", item.target, format, item.source)
+                        }
+                    }
 
                     stack.pop().unwrap();
                     if stack.is_empty() {
@@ -443,7 +454,7 @@ impl Treasury {
 
             let asset = AssetMeta::new(
                 new_id,
-                item.format,
+                item.format.clone(),
                 sources,
                 item.dependencies.into_iter().collect(),
                 &output_path,
@@ -453,7 +464,16 @@ impl Treasury {
 
             let artifact_path = asset.artifact_path(artifacts);
 
-            meta.add_asset(item.target, asset, base, external)?;
+            meta.add_asset(item.target.clone(), asset, base, external)?;
+
+            self.artifacts.write().insert(
+                new_id,
+                AssetItem {
+                    source: item.source,
+                    format: item.format,
+                    target: item.target,
+                },
+            );
 
             if stack.is_empty() {
                 return Ok((new_id, artifact_path));
@@ -472,12 +492,7 @@ impl Treasury {
             let mut scanned = self.scanned.write();
 
             if !*scanned {
-                scan_local(
-                    &self.base,
-                    &self.base_url,
-                    &existing_artifacts,
-                    &mut new_artifacts,
-                );
+                scan_local(&self.base, &existing_artifacts, &mut new_artifacts);
                 scan_external(&self.external, &existing_artifacts, &mut new_artifacts);
 
                 let mut artifacts = self.artifacts.write();
@@ -495,7 +510,7 @@ impl Treasury {
         let item = self.artifacts.read().get(&id).cloned()?;
 
         let (_, path) = self
-            .store(&item.source, item.format.as_deref(), &item.target)
+            .store_url(item.source, item.format.as_deref(), &item.target)
             .await
             .ok()?;
 
@@ -620,7 +635,7 @@ fn scan_external(
                 Ok(meta) => meta,
             };
 
-            let source = meta.url().to_string();
+            let source = meta.url();
 
             for (target, asset) in meta.assets() {
                 if !existing_artifacts.contains(&asset.id()) {
@@ -640,7 +655,6 @@ fn scan_external(
 
 fn scan_local(
     base: &Path,
-    base_url: &Url,
     existing_artifacts: &HashSet<AssetId>,
     artifacts: &mut Vec<(AssetId, AssetItem)>,
 ) {
@@ -698,23 +712,17 @@ fn scan_local(
                     Ok(meta) => meta,
                 };
 
-                match base_url.make_relative(meta.url()) {
-                    None => {
-                        tracing::error!("Local meta is not local to base");
-                    }
-                    Some(source) => {
-                        for (target, asset) in meta.assets() {
-                            if !existing_artifacts.contains(&asset.id()) {
-                                artifacts.push((
-                                    asset.id(),
-                                    AssetItem {
-                                        source: source.clone(),
-                                        format: asset.format().map(ToOwned::to_owned),
-                                        target: target.to_owned(),
-                                    },
-                                ));
-                            }
-                        }
+                let source = meta.url();
+                for (target, asset) in meta.assets() {
+                    if !existing_artifacts.contains(&asset.id()) {
+                        artifacts.push((
+                            asset.id(),
+                            AssetItem {
+                                source: source.clone(),
+                                format: asset.format().map(ToOwned::to_owned),
+                                target: target.to_owned(),
+                            },
+                        ));
                     }
                 }
             }
