@@ -7,12 +7,28 @@ use treasury_import::{
 struct FooImporter;
 
 impl Importer for FooImporter {
+    fn name(&self) -> &str {
+        "Foo importer"
+    }
+
+    fn formats(&self) -> &[&str] {
+        &["foo"]
+    }
+
+    fn target(&self) -> &str {
+        "foo"
+    }
+
+    fn extensions(&self) -> &[&str] {
+        &["json"]
+    }
+
     fn import(
         &self,
         source: &Path,
         output: &Path,
-        _sources: &impl Sources,
-        _dependencies: &impl Dependencies,
+        _sources: &mut (impl Sources + ?Sized),
+        _dependencies: &mut (impl Dependencies + ?Sized),
     ) -> Result<(), ImportError> {
         let mut src = match File::open(source) {
             Ok(f) => f,
@@ -59,5 +75,5 @@ impl Importer for FooImporter {
 }
 
 make_treasury_importers_library! {
-    [json] foo : foo -> foo = &FooImporter;
+    &FooImporter;
 }

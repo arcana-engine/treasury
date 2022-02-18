@@ -17,12 +17,7 @@ pub struct DylibImporter {
 
 impl fmt::Debug for DylibImporter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} @ {}",
-            &*self.ffi.name_lossy(),
-            self.lib_path.display()
-        )
+        write!(f, "{} @ {}", &*self.ffi.name(), self.lib_path.display())
     }
 }
 
@@ -43,26 +38,26 @@ impl DylibImporter {
     }
 
     pub fn name(&self) -> &str {
-        self.ffi.name().unwrap_or("<Non-UTF8 name>")
+        self.ffi.name()
     }
 
-    pub fn format(&self) -> &str {
-        self.ffi.format().unwrap()
+    pub fn formats(&self) -> Vec<&str> {
+        self.ffi.formats()
     }
 
-    // pub fn target(&self) -> &str {
-    //     self.ffi.target().unwrap()
-    // }
+    pub fn target(&self) -> &str {
+        self.ffi.target()
+    }
 
-    pub fn extensions(&self) -> impl Iterator<Item = &str> + '_ {
-        self.ffi.extensions().filter_map(Result::ok)
+    pub fn extensions(&self) -> Vec<&str> {
+        self.ffi.extensions()
     }
 }
 
 /// Load importers from dynamic library at specified path.
 pub unsafe fn load_importers(
     lib_path: &Path,
-) -> eyre::Result<impl Iterator<Item = (String, String, DylibImporter)> + '_> {
+) -> eyre::Result<impl Iterator<Item = DylibImporter> + '_> {
     tracing::info!("Loading importers from '{}'", lib_path.display());
 
     let lib = libloading::Library::new(lib_path)?;
@@ -101,7 +96,8 @@ pub unsafe fn load_importers(
         .get::<ExportImportersFnType>(EXPORT_IMPORTERS_FN_NAME.as_bytes())
         .wrap_err_with(|| eyre::eyre!("'{}' symbol not found", EXPORT_IMPORTERS_FN_NAME))?;
 
-    let mut importers: Vec<_> = (0..64).map(|_| MaybeUninit::uninit()).collect();
+    let mut importers = Vec::new();
+    importers.resize_with(64, MaybeUninit::uninit);
 
     loop {
         let count = export_importers(
@@ -120,56 +116,12 @@ pub unsafe fn load_importers(
 
     let lib_path: Arc<Path> = Arc::from(lib_path);
 
-    Ok(importers.into_iter().filter_map(move |importer| {
+    Ok(importers.into_iter().map(move |importer| {
         let ffi: ImporterFFI = importer.assume_init();
-
-        let format = match ffi.format() {
-            Ok(format) => format.to_owned(),
-            Err(_) => {
-                tracing::error!(
-                    "Library '{}' exports importer with non UTF-8 format",
-                    lib_path.display()
-                );
-                return None;
-            }
-        };
-
-        let target = match ffi.target() {
-            Ok(target) => target.to_owned(),
-            Err(_) => {
-                tracing::error!(
-                    "Library '{}' exports importer with non UTF-8 target",
-                    lib_path.display()
-                );
-                return None;
-            }
-        };
-
-        match ffi.name() {
-            Ok(name) => {
-                tracing::info!(
-                    "Importer '{}' loader from library '{}'",
-                    name,
-                    lib_path.display()
-                );
-            }
-            Err(_) => {
-                tracing::error!(
-                    "Library '{}' exports importer with non UTF-8 name",
-                    lib_path.display()
-                );
-                return None;
-            }
-        };
-
-        Some((
-            format,
-            target,
-            DylibImporter {
-                lib_path: lib_path.clone(),
-                _lib: lib.clone(),
-                ffi,
-            },
-        ))
+        DylibImporter {
+            lib_path: lib_path.clone(),
+            _lib: lib.clone(),
+            ffi,
+        }
     }))
 }

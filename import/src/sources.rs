@@ -18,10 +18,10 @@ use crate::{
 
 pub trait Sources {
     /// Get data from specified source.
-    fn get(&self, source: &str) -> Result<Option<PathBuf>, String>;
+    fn get(&mut self, source: &str) -> Result<Option<PathBuf>, String>;
 
     fn get_or_append(
-        &self,
+        &mut self,
         source: &str,
         missing: &mut Vec<String>,
     ) -> Result<Option<PathBuf>, String> {
@@ -32,6 +32,18 @@ pub trait Sources {
                 missing.push(source.to_owned());
                 Ok(None)
             }
+        }
+    }
+}
+
+impl<'a, F> Sources for F
+where
+    F: FnMut(&str) -> Option<&'a Path> + 'a,
+{
+    fn get(&mut self, source: &str) -> Result<Option<PathBuf>, String> {
+        match (*self)(source) {
+            None => Ok(None),
+            Some(path) => Ok(Some(path.to_owned())),
         }
     }
 }
@@ -111,7 +123,7 @@ impl SourcesFFI {
 }
 
 impl Sources for SourcesFFI {
-    fn get(&self, source: &str) -> Result<Option<PathBuf>, String> {
+    fn get(&mut self, source: &str) -> Result<Option<PathBuf>, String> {
         let mut path_buf = vec![0; PATH_BUF_LEN_START];
         let mut path_len = path_buf.len() as u32;
 

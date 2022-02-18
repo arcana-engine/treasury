@@ -31,7 +31,7 @@
 //! }
 //! ```
 
-use std::{borrow::Cow, mem::size_of, path::Path, str::Utf8Error};
+use std::{mem::size_of, path::Path};
 
 #[cfg(unix)]
 use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
@@ -61,18 +61,18 @@ pub type MagicType = u32;
 pub const MAGIC_NAME: &'static str = "TREASURY_DYLIB_MAGIC";
 
 pub type VersionFnType = unsafe extern "C" fn() -> u32;
-pub const VERSION_FN_NAME: &'static str = "treasury_importer_ffi_version";
+pub const VERSION_FN_NAME: &'static str = "treasury_importer_ffi_version_minor";
 
 pub type ExportImportersFnType = unsafe extern "C" fn(buffer: *mut ImporterFFI, count: u32) -> u32;
 pub const EXPORT_IMPORTERS_FN_NAME: &'static str = "treasury_export_importers";
 
 pub fn version() -> u32 {
-    let major = env!("CARGO_PKG_VERSION_MAJOR");
-    let version = major.parse().unwrap();
+    let version = env!("CARGO_PKG_VERSION_MINOR");
+    let version = version.parse().unwrap();
     assert_ne!(
         version,
         u32::MAX,
-        "Major version hits u32::MAX. Oh no. Upgrade to u64",
+        "Minor version hits u32::MAX. Oh no. Upgrade to u64",
     );
     version
 }
@@ -139,13 +139,25 @@ pub fn ensure_sources(missing: Vec<String>) -> Result<(), ImportError> {
 
 /// Trait for an importer.
 pub trait Importer: Send + Sync {
+    /// Returns name of the importer
+    fn name(&self) -> &str;
+
+    /// Returns source format importer works with.
+    fn formats(&self) -> &[&str];
+
+    /// Returns list of extensions for source formats.
+    fn extensions(&self) -> &[&str];
+
+    /// Returns target format importer produces.
+    fn target(&self) -> &str;
+
     /// Reads data from `source` path and writes result at `output` path.
     fn import(
         &self,
         source: &Path,
         output: &Path,
-        sources: &impl Sources,
-        dependencies: &impl Dependencies,
+        sources: &mut (impl Sources + ?Sized),
+        dependencies: &mut (impl Dependencies + ?Sized),
     ) -> Result<(), ImportError>;
 }
 
@@ -195,18 +207,23 @@ where
     #[cfg(windows)]
     let output = OsString::from_wide(output);
 
-    let sources = SourcesFFI {
+    let mut sources = SourcesFFI {
         opaque: sources,
         get: sources_get,
     };
 
-    let dependencies = DependenciesFFI {
+    let mut dependencies = DependenciesFFI {
         opaque: dependencies,
         get: dependencies_get,
     };
 
     let importer = &*(importer as *const I);
-    let result = importer.import(source.as_ref(), output.as_ref(), &sources, &dependencies);
+    let result = importer.import(
+        source.as_ref(),
+        output.as_ref(),
+        &mut sources,
+        &mut dependencies,
+    );
 
     match result {
         Ok(()) => SUCCESS,
@@ -314,15 +331,16 @@ where
 }
 
 const MAX_EXTENSION_LEN: usize = 16;
-const MAX_EXTENSION_COUNT: usize = 256;
-const MAX_FFI_NAME_LEN: usize = 256;
+const MAX_EXTENSION_COUNT: usize = 16;
+const MAX_FFI_NAME_LEN: usize = 64;
+const MAX_FORMATS_COUNT: usize = 32;
 
 #[repr(C)]
 pub struct ImporterFFI {
     importer: *const ImporterOpaque,
     import: ImporterImportFn,
     name: [u8; MAX_FFI_NAME_LEN],
-    format: [u8; MAX_FFI_NAME_LEN],
+    formats: [[u8; MAX_FFI_NAME_LEN]; MAX_FORMATS_COUNT],
     target: [u8; MAX_FFI_NAME_LEN],
     extensions: [[u8; MAX_EXTENSION_LEN]; MAX_EXTENSION_COUNT],
 }
@@ -335,16 +353,15 @@ unsafe impl Send for ImporterFFI {}
 unsafe impl Sync for ImporterFFI {}
 
 impl ImporterFFI {
-    pub fn new<'a, I>(
-        importer: &'static I,
-        name: &str,
-        format: &str,
-        target: &str,
-        extensions: &[&'a str],
-    ) -> Self
+    pub fn new<'a, I>(importer: &'static I) -> Self
     where
         I: Importer,
     {
+        let name = importer.name();
+        let formats = importer.formats();
+        let target = importer.target();
+        let extensions = importer.extensions();
+
         let importer = importer as *const I as *const ImporterOpaque;
 
         assert!(
@@ -353,8 +370,13 @@ impl ImporterFFI {
             MAX_FFI_NAME_LEN
         );
         assert!(
-            format.len() <= MAX_FFI_NAME_LEN,
-            "Importer format should fit into {} bytes",
+            formats.len() <= MAX_FORMATS_COUNT,
+            "Importer should support no more than {} formats",
+            MAX_FORMATS_COUNT
+        );
+        assert!(
+            formats.iter().all(|f| f.len() <= MAX_FFI_NAME_LEN),
+            "Importer formats should fit into {} bytes",
             MAX_FFI_NAME_LEN
         );
         assert!(
@@ -374,20 +396,16 @@ impl ImporterFFI {
         );
 
         assert!(!name.is_empty(), "Importer name should not be empty");
-        assert!(!format.is_empty(), "Importer format should not be empty");
+        assert!(!formats.is_empty(), "Importer formats should not be empty");
         assert!(!target.is_empty(), "Importer target should not be empty");
-        assert!(
-            extensions.iter().all(|e| !e.is_empty()),
-            "Importer extensions should not be empty"
-        );
 
         assert!(
             !name.contains('\0'),
             "Importer name should not contain '\\0' byte"
         );
         assert!(
-            !format.contains('\0'),
-            "Importer format should not contain '\\0' byte"
+            formats.iter().all(|f| !f.contains('\0')),
+            "Importer formats should not contain '\\0' byte"
         );
         assert!(
             !target.contains('\0'),
@@ -401,8 +419,10 @@ impl ImporterFFI {
         let mut name_buf = [0; MAX_FFI_NAME_LEN];
         name_buf[..name.len()].copy_from_slice(name.as_bytes());
 
-        let mut format_buf = [0; MAX_FFI_NAME_LEN];
-        format_buf[..format.len()].copy_from_slice(format.as_bytes());
+        let mut formats_buf = [[0; MAX_FFI_NAME_LEN]; MAX_FORMATS_COUNT];
+        for (i, &format) in formats.iter().enumerate() {
+            formats_buf[i][..format.len()].copy_from_slice(format.as_bytes());
+        }
 
         let mut target_buf = [0; MAX_FFI_NAME_LEN];
         target_buf[..target.len()].copy_from_slice(target.as_bytes());
@@ -417,51 +437,61 @@ impl ImporterFFI {
             importer,
             import: importer_import_ffi::<I>,
             name: name_buf,
-            format: format_buf,
+            formats: formats_buf,
             target: target_buf,
             extensions: extensions_buf,
         }
     }
 
-    pub fn name(&self) -> Result<&str, Utf8Error> {
+    pub fn name(&self) -> &str {
         match self.name.iter().position(|b| *b == 0) {
-            None => std::str::from_utf8(&self.name),
-            Some(i) => std::str::from_utf8(&self.name[..i]),
+            None => std::str::from_utf8(&self.name).unwrap(),
+            Some(i) => std::str::from_utf8(&self.name[..i]).unwrap(),
         }
     }
 
-    pub fn name_lossy(&self) -> Cow<'_, str> {
-        match self.name.iter().position(|b| *b == 0) {
-            None => String::from_utf8_lossy(&self.name),
-            Some(i) => String::from_utf8_lossy(&self.name[..i]),
-        }
+    pub fn formats(&self) -> Vec<&str> {
+        let iter = self.formats.iter().take_while(|format| format[0] != 0);
+
+        iter.map(|format| match format.iter().position(|b| *b == 0) {
+            None => std::str::from_utf8(format).unwrap(),
+            Some(i) => std::str::from_utf8(&format[..i]).unwrap(),
+        })
+        .collect()
     }
 
-    pub fn format(&self) -> Result<&str, Utf8Error> {
-        match self.format.iter().position(|b| *b == 0) {
-            None => std::str::from_utf8(&self.format),
-            Some(i) => std::str::from_utf8(&self.format[..i]),
-        }
-    }
-
-    pub fn target(&self) -> Result<&str, Utf8Error> {
+    pub fn target(&self) -> &str {
         match self.target.iter().position(|b| *b == 0) {
-            None => std::str::from_utf8(&self.target),
-            Some(i) => std::str::from_utf8(&self.target[..i]),
+            None => std::str::from_utf8(&self.target).unwrap(),
+            Some(i) => std::str::from_utf8(&self.target[..i]).unwrap(),
         }
     }
 
-    pub fn extensions(&self) -> impl Iterator<Item = Result<&str, Utf8Error>> {
+    pub fn extensions(&self) -> Vec<&str> {
         let iter = self
             .extensions
             .iter()
             .take_while(|extension| extension[0] != 0);
 
         iter.map(|extension| match extension.iter().position(|b| *b == 0) {
-            None => std::str::from_utf8(extension),
-            Some(i) => std::str::from_utf8(&extension[..i]),
+            None => std::str::from_utf8(extension).unwrap(),
+            Some(i) => std::str::from_utf8(&extension[..i]).unwrap(),
         })
+        .collect()
     }
+
+    // pub fn supports_extension(&self, ext: &str) -> bool {
+    //     if ext.len() > MAX_EXTENSION_LEN {
+    //         return false;
+    //     }
+
+    //     let mut iter = self
+    //         .extensions
+    //         .iter()
+    //         .take_while(|extension| extension[0] != 0);
+
+    //     iter.any(|supported| supported[..ext.len()] == *ext.as_bytes())
+    // }
 
     pub fn import<'a, S, D>(
         &self,
@@ -642,29 +672,25 @@ impl ImporterFFI {
 /// <optional array of extensions> <importer name> : <format string literal> -> <target string literal> = <importer expression of type [`&'static impl Importer`]">
 #[macro_export]
 macro_rules! make_treasury_importers_library {
-    ($(
-        $([$( $ext:ident ),* $(,)?])? $($name:ident).+ : $($format:ident).+ -> $($target:ident).+ = $importer:expr;
-    )*) => {
+    ($($importer:expr;)*) => {
         #[no_mangle]
         pub static TREASURY_DYLIB_MAGIC: u32 = $crate::MAGIC;
 
         #[no_mangle]
-        pub unsafe extern "C" fn treasury_importer_ffi_version() -> u32 {
+        pub unsafe extern "C" fn treasury_importer_ffi_version_minor() -> u32 {
             $crate::version()
         }
 
         #[no_mangle]
-        pub unsafe extern "C" fn treasury_export_importers(buffer: *mut $crate::ImporterFFI, count: u32) -> u32 {
+        pub unsafe extern "C" fn treasury_export_importers(buffer: *mut $crate::ImporterFFI, mut cap: u32) -> u32 {
             let mut len = 0;
-            let mut cap = count + 1;
             $(
-                cap -= 1;
                 if cap > 0 {
-                    core::ptr::write(buffer.add(len as usize), $crate::ImporterFFI::new($importer, ::core::stringify!($($name).+), ::core::stringify!($($format).+), ::core::stringify!($($target).+), &[ $($(::core::stringify!($ext)),*)? ]));
+                    core::ptr::write(buffer.add(len as usize), $crate::ImporterFFI::new($importer));
+                    cap -= 1;
                 }
                 len += 1;
             )*
-
             len
         }
     };

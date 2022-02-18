@@ -12,7 +12,7 @@ use parking_lot::RwLock;
 use sources::Sources;
 use temp::Temporaries;
 use treasury_id::{AssetId, AssetIdContext};
-use treasury_import::ImportError;
+use treasury_import::{ImportError, Importer};
 use url::Url;
 
 mod importer;
@@ -191,10 +191,16 @@ impl Treasury {
     /// Loads importers from dylib.
     /// There is no possible way to guarantee that dylib does not break safety contracts.
     /// Some measures to ensure safety are taken.
-    /// Providing dylib from which importers will be successfully loaded and then cause an UB should possible only on purpose.
+    /// Providing dylib from which importers will be successfully loaded and then cause an UB should only be possible on purpose.
     #[tracing::instrument(skip(self))]
     pub unsafe fn register_importers_lib(&mut self, lib_path: &Path) -> eyre::Result<()> {
         self.importers.load_dylib_importers(lib_path)
+    }
+
+    /// Adds importer to the store.
+    #[tracing::instrument(skip_all)]
+    pub fn register_importer(&mut self, importer: impl Importer + 'static) {
+        self.importers.register_importer(importer)
     }
 
     /// Import an asset.
@@ -295,10 +301,8 @@ impl Treasury {
                 }
             }
 
-            let importer = match &item.format {
-                None => importers.guess(url_ext(&item.source), &item.target)?,
-                Some(format) => importers.get(format, &item.target),
-            };
+            let importer =
+                importers.guess(item.format.as_deref(), url_ext(&item.source), &item.target)?;
 
             let importer = importer.ok_or_else(|| {
                 eyre::eyre!(
@@ -347,9 +351,9 @@ impl Treasury {
                 Ok(()) => {}
                 Err(ImportError::Other { reason }) => {
                     return Err(eyre::eyre!(
-                        "Failed to import {}:{}->{}. {}",
+                        "Failed to import {}:{:?}->{}. {}",
                         item.source,
-                        importer.format(),
+                        item.format,
                         item.target,
                         reason,
                     ))
@@ -357,9 +361,9 @@ impl Treasury {
                 Err(ImportError::RequireSources { sources: srcs }) => {
                     if item.attempt >= MAX_ITEM_ATTEMPTS {
                         return Err(eyre::eyre!(
-                            "Failed to import {}:{}->{}. Too many attempts",
+                            "Failed to import {}:{:?}->{}. Too many attempts",
                             item.source,
-                            importer.format(),
+                            item.format,
                             item.target,
                         ));
                     }
@@ -383,9 +387,9 @@ impl Treasury {
                 Err(ImportError::RequireDependencies { dependencies }) => {
                     if item.attempt >= MAX_ITEM_ATTEMPTS {
                         return Err(eyre::eyre!(
-                            "Failed to import {}:{}->{}. Too many attempts",
+                            "Failed to import {}:{:?}->{}. Too many attempts",
                             item.source,
-                            importer.format(),
+                            item.format,
                             item.target,
                         ));
                     }

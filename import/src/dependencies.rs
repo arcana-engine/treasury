@@ -4,10 +4,10 @@ use crate::{Dependency, NOT_FOUND, NOT_UTF8, SUCCESS};
 
 pub trait Dependencies {
     /// Returns dependency id.
-    fn get(&self, source: &str, target: &str) -> Result<Option<AssetId>, String>;
+    fn get(&mut self, source: &str, target: &str) -> Result<Option<AssetId>, String>;
 
     fn get_or_append(
-        &self,
+        &mut self,
         source: &str,
         target: &str,
         missing: &mut Vec<Dependency>,
@@ -23,6 +23,15 @@ pub trait Dependencies {
                 Ok(None)
             }
         }
+    }
+}
+
+impl<F> Dependencies for F
+where
+    F: FnMut(&str, &str) -> Option<AssetId>,
+{
+    fn get(&mut self, source: &str, target: &str) -> Result<Option<AssetId>, String> {
+        Ok((*self)(source, target))
     }
 }
 
@@ -90,7 +99,7 @@ impl DependenciesFFI {
 }
 
 impl Dependencies for DependenciesFFI {
-    fn get(&self, source: &str, target: &str) -> Result<Option<AssetId>, String> {
+    fn get(&mut self, source: &str, target: &str) -> Result<Option<AssetId>, String> {
         let mut id = 0u64;
         let result = unsafe {
             (self.get)(
