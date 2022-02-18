@@ -7,12 +7,27 @@
 //! struct FooImporter;
 //!
 //! impl treasury_import::Importer for FooImporter {
+//!     fn name(&self) -> &str {
+//!         "Foo importer"
+//!     }
+//!
+//!     fn formats(&self) -> &[&str] {
+//!         &["foo"]
+//!     }
+//!
+//!     fn target(&self) -> &str {
+//!         "foo"
+//!     }
+//!
+//!     fn extensions(&self) -> &[&str] {
+//!         &["json"]
+//!     }
 //!     fn import(
 //!         &self,
 //!         source: &std::path::Path,
 //!         output: &std::path::Path,
-//!         _sources: &impl treasury_import::Sources,
-//!         _dependencies: &impl treasury_import::Dependencies,
+//!         _sources: &mut (impl treasury_import::Sources + ?Sized),
+//!         _dependencies: &mut (impl treasury_import::Dependencies + ?Sized),
 //!     ) -> Result<(), treasury_import::ImportError> {
 //!         match std::fs::copy(source, output) {
 //!           Ok(_) => Ok(()),
@@ -24,10 +39,8 @@
 //!
 //! // Define all required exports.
 //! treasury_import::make_treasury_importers_library! {
-//!     // [extensions list]  <name> : <source-format> -> <target-format> = <expr>;
-//!     // <expr> must have type &'static I where I: Importer
-//!     // Use `Box::leak(importer)` if importer instance cannot be constructed in constant expression.
-//!     [foo] foo : foo -> foo = &FooImporter;
+//!     // Each <expr;> must have type &'static I where I: Importer
+//!     &FooImporter;
 //! }
 //! ```
 
