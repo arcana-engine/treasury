@@ -22,7 +22,7 @@ treasury-client = { version = "=0.2.0", path = "../client" }
 url = "2.0"
 eyre = "0.6"
 color-eyre = "0.6"
-clap = "2.33"
+clap = "4.0"
 tokio = { version = "1.0", features = ["rt", "net", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
