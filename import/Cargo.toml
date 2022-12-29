@@ -15,3 +15,4 @@ description = "FFI for treasury importers"
 [dependencies]
 treasury-id = { version = "=0.1.0", path = "../id" }
 tracing = { version = "0.1", default-features = false }
+libloading = { version = "0.7", default-features = false, optional = true }

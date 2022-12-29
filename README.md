@@ -2,7 +2,7 @@
 
 [![crates](https://img.shields.io/crates/v/treasury.svg?style=for-the-badge&label=treasury)](https://crates.io/crates/treasury)
 [![docs](https://img.shields.io/badge/docs.rs-treasury-66c2a5?style=for-the-badge&labelColor=555555&logoColor=white)](https://docs.rs/treasury)
-[![actions](https://img.shields.io/github/workflow/status/arcana-engine/treasury/badge/master?style=for-the-badge)](https://github.com/arcana-engine/treasury/actions?query=workflow%3ARust)
+[![actions](https://img.shields.io/github/actions/workflow/status/arcana-engine/treasury/badge.yml?branch=master&style=for-the-badge)](https://github.com/arcana-engine/treasury/actions/workflows/badge.yml)
 [![MIT/Apache](https://img.shields.io/badge/license-MIT%2FApache-blue.svg?style=for-the-badge)](COPYING)
 ![loc](https://img.shields.io/tokei/lines/github/arcana-engine/treasury?style=for-the-badge)
 

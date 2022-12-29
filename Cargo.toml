@@ -1,2 +1,2 @@
 [workspace]
-members = ["store", "client", "server", "cli", "example/foo-importer"]
+members = ["store", "example/foo-importer"]

@@ -4,7 +4,7 @@ use eyre::WrapErr;
 
 use treasury_id::AssetId;
 use treasury_import::{
-    version, ExportImportersFnType, ImportError, ImporterFFI, VersionFnType,
+    version, ExportImportersFnType, ImportError, Importer, ImporterFFI, VersionFnType,
     EXPORT_IMPORTERS_FN_NAME, MAGIC, MAGIC_NAME, VERSION_FN_NAME,
 };
 
@@ -13,12 +13,38 @@ pub struct DylibImporter {
     /// Keeps dylib alive.
     _lib: Arc<libloading::Library>,
     ffi: ImporterFFI,
+    formats: Vec<String>,
 }
 
 impl fmt::Debug for DylibImporter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} @ {}", &*self.ffi.name(), self.lib_path.display())
     }
+}
+
+impl Importer for DylibImporter {
+    fn name(&self) -> &str {
+        self.ffi.name()
+    }
+
+    fn formats(&self) -> &[&str] {
+        self.ffi.formats()
+    }
+
+    /// Returns list of extensions for source formats.
+    fn extensions(&self) -> &[&str];
+
+    /// Returns target format importer produces.
+    fn target(&self) -> &str;
+
+    /// Reads data from `source` path and writes result at `output` path.
+    fn import(
+        &self,
+        source: &Path,
+        output: &Path,
+        sources: &mut dyn Sources,
+        dependencies: &mut dyn Dependencies,
+    ) -> Result<(), ImportError>;
 }
 
 impl DylibImporter {

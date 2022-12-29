@@ -1,7 +1,7 @@
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
-    time::{Duration, SystemTime},
+    time::SystemTime,
 };
 
 use eyre::WrapErr;
@@ -11,8 +11,8 @@ use meta::{AssetMeta, SourceMeta};
 use parking_lot::RwLock;
 use sources::Sources;
 use temp::Temporaries;
-use treasury_id::{AssetId, AssetIdContext};
-use treasury_import::{ImportError, Importer};
+use treasury_id::AssetId;
+use treasury_import::{loading::LoadingError, ImportError, Importer};
 use url::Url;
 
 mod importer;
@@ -91,7 +91,6 @@ struct AssetItem {
 }
 
 pub struct Treasury {
-    id_ctx: AssetIdContext,
     base: PathBuf,
     base_url: Url,
     artifacts_base: PathBuf,
@@ -106,22 +105,22 @@ pub struct Treasury {
 impl Treasury {
     /// Find and open treasury in ancestors of specified directory.
     #[tracing::instrument]
-    pub fn find_from(path: &Path) -> eyre::Result<Self> {
-        let meta_path = find_treasury_info(path).ok_or_else(|| {
-            eyre::eyre!(
-                "Failed to find `Treasury.toml` in ancestors of {}",
-                path.display(),
-            )
-        })?;
+    pub fn find(path: &Path) -> eyre::Result<Self> {
+        let path = dunce::canonicalize(path)?;
+        let err = format!(
+            "Failed to find `Treasury.toml` in ancestors of {}",
+            path.display()
+        );
+        let meta_path = find_treasury_info(path).ok_or_else(|| eyre::eyre!(err))?;
 
         Treasury::open(&meta_path)
     }
 
     /// Find and open treasury in ancestors of current directory.
     #[tracing::instrument]
-    pub fn find() -> eyre::Result<Self> {
+    pub fn find_current() -> eyre::Result<Self> {
         let cwd = std::env::current_dir().wrap_err("Failed to get current directory")?;
-        Treasury::find_from(&cwd)
+        Treasury::find(&cwd)
     }
 
     /// Open treasury database at specified path.
@@ -154,8 +153,6 @@ impl Treasury {
             .temp
             .map_or_else(std::env::temp_dir, |path| base.join(path));
 
-        let id_ctx = AssetIdContext::new(treasury_epoch(), rand::random());
-
         let mut importers = Importers::new();
 
         for lib_path in &meta.importers {
@@ -176,7 +173,6 @@ impl Treasury {
         }
 
         Ok(Treasury {
-            id_ctx,
             base,
             base_url,
             artifacts_base: artifacts,
@@ -193,7 +189,7 @@ impl Treasury {
     /// Some measures to ensure safety are taken.
     /// Providing dylib from which importers will be successfully loaded and then cause an UB should only be possible on purpose.
     #[tracing::instrument(skip(self))]
-    pub unsafe fn register_importers_lib(&mut self, lib_path: &Path) -> eyre::Result<()> {
+    pub unsafe fn register_importers_lib(&mut self, lib_path: &Path) -> Result<(), LoadingError> {
         self.importers.load_dylib_importers(lib_path)
     }
 
@@ -204,12 +200,13 @@ impl Treasury {
     }
 
     /// Import an asset.
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self, new_id))]
     pub async fn store(
         &self,
         source: &str,
         format: Option<&str>,
         target: &str,
+        new_id: impl FnMut() -> AssetId,
     ) -> eyre::Result<(AssetId, PathBuf)> {
         let source = self.base_url.join(source).wrap_err_with(|| {
             format!(
@@ -218,16 +215,17 @@ impl Treasury {
             )
         })?;
 
-        self.store_url(source, format, target).await
+        self.store_url(source, format, target, new_id).await
     }
 
     /// Import an asset.
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self, new_id))]
     pub async fn store_url(
         &self,
         source: Url,
         format: Option<&str>,
         target: &str,
+        mut new_id: impl FnMut() -> AssetId,
     ) -> eyre::Result<(AssetId, PathBuf)> {
         let mut temporaries = Temporaries::new(&self.temp);
         let mut sources = Sources::new();
@@ -319,18 +317,38 @@ impl Treasury {
 
             let output_path = temporaries.make_temporary();
 
+            struct Fn<F>(F);
+
+            impl<F> treasury_import::Sources for Fn<F>
+            where
+                F: FnMut(&str) -> Option<PathBuf>,
+            {
+                fn get(&mut self, source: &str) -> Result<Option<PathBuf>, String> {
+                    Ok((self.0)(source))
+                }
+            }
+
+            impl<F> treasury_import::Dependencies for Fn<F>
+            where
+                F: FnMut(&str, &str) -> Option<AssetId>,
+            {
+                fn get(&mut self, source: &str, target: &str) -> Result<Option<AssetId>, String> {
+                    Ok((self.0)(source, target))
+                }
+            }
+
             let result = importer.import(
                 &source_path,
                 &output_path,
-                |src: &str| {
+                &mut Fn(|src: &str| {
                     let src = item.source.join(src).ok()?; // If parsing fails - source will be listed in `ImportResult::RequireSources`.
                     let (path, modified) = sources.get(&src)?;
                     if let Some(modified) = modified {
                         item.sources.insert(src, modified);
                     }
-                    Some(path)
-                },
-                |src: &str, target: &str| {
+                    Some(path.to_owned())
+                }),
+                &mut Fn(|src: &str, target: &str| {
                     let src = item.source.join(src).ok()?;
 
                     match SourceMeta::new(&src, base, external) {
@@ -344,7 +362,7 @@ impl Treasury {
                             None
                         }
                     }
-                },
+                }),
             );
 
             match result {
@@ -437,7 +455,7 @@ impl Treasury {
                 }
             }
 
-            let new_id = self.id_ctx.generate();
+            let new_id = new_id();
 
             let item = stack.pop().unwrap();
 
@@ -486,7 +504,7 @@ impl Treasury {
     }
 
     /// Fetch asset data path.
-    pub async fn fetch(&self, id: AssetId) -> Option<PathBuf> {
+    pub async fn fetch(&self, id: AssetId, new_id: impl FnMut() -> AssetId) -> Option<PathBuf> {
         let scanned = *self.scanned.read();
 
         if !scanned {
@@ -514,7 +532,7 @@ impl Treasury {
         let item = self.artifacts.read().get(&id).cloned()?;
 
         let (_, path) = self
-            .store_url(item.source, item.format.as_deref(), &item.target)
+            .store_url(item.source, item.format.as_deref(), &item.target, new_id)
             .await
             .ok()?;
 
@@ -526,6 +544,7 @@ impl Treasury {
         &self,
         source: &str,
         target: &str,
+        new_id: impl FnMut() -> AssetId,
     ) -> eyre::Result<Option<(AssetId, PathBuf)>> {
         let source_url = self.base_url.join(source).wrap_err_with(|| {
             format!(
@@ -540,7 +559,7 @@ impl Treasury {
         match meta.get_asset(target) {
             None => {
                 drop(meta);
-                match self.store(source, None, target).await {
+                match self.store(source, None, target, new_id).await {
                     Err(err) => {
                         tracing::warn!(
                             "Failed to store '{}' as '{}' on lookup. {:#}",
@@ -561,21 +580,18 @@ impl Treasury {
     }
 }
 
-pub fn find_treasury_info(mut path: &Path) -> Option<PathBuf> {
+pub fn find_treasury_info(mut path: PathBuf) -> Option<PathBuf> {
     loop {
-        let candidate = path.join(TREASURY_META_NAME);
-        if candidate.is_file() {
-            return Some(candidate);
+        path.push(TREASURY_META_NAME);
+        if path.is_file() {
+            return Some(path);
         }
-        path = path.parent()?;
+        path.pop();
+
+        if !path.pop() {
+            return None;
+        }
     }
-}
-
-fn treasury_epoch() -> SystemTime {
-    /// Starting point of treasury epoch relative to unix epoch in seconds.
-    const TREASURY_EPOCH_FROM_UNIX: u64 = 1609448400;
-
-    SystemTime::UNIX_EPOCH + Duration::from_secs(TREASURY_EPOCH_FROM_UNIX)
 }
 
 fn url_ext(url: &Url) -> Option<&str> {

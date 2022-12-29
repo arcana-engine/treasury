@@ -27,8 +27,8 @@ impl Importer for FooImporter {
         &self,
         source: &Path,
         output: &Path,
-        _sources: &mut (impl Sources + ?Sized),
-        _dependencies: &mut (impl Dependencies + ?Sized),
+        _sources: &mut dyn Sources,
+        _dependencies: &mut dyn Dependencies,
     ) -> Result<(), ImportError> {
         let mut src = match File::open(source) {
             Ok(f) => f,

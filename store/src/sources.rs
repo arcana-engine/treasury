@@ -6,6 +6,10 @@ use std::{
     time::SystemTime,
 };
 
+use base64::{
+    alphabet::URL_SAFE,
+    engine::fast_portable::{FastPortable, NO_PAD},
+};
 use eyre::WrapErr;
 use hashbrown::{hash_map::RawEntryMut, HashMap};
 use url::Url;
@@ -13,6 +17,7 @@ use url::Url;
 use crate::{scheme::Scheme, temp::Temporaries};
 
 /// Fetches and caches sources.
+/// Saves remote sources to temporaries.
 pub struct Sources {
     feched: HashMap<Url, (PathBuf, bool)>,
 }
@@ -39,7 +44,7 @@ impl Sources {
         temporaries: &mut Temporaries<'_>,
         source: &Url,
     ) -> eyre::Result<(&Path, Option<SystemTime>)> {
-        match self.feched.raw_entry_mut().from_key(&source) {
+        match self.feched.raw_entry_mut().from_key(source) {
             RawEntryMut::Occupied(entry) => {
                 let (path, local) = entry.into_mut();
                 if *local {
@@ -75,8 +80,9 @@ impl Sources {
                         .wrap_err("Failed to create temporary file to store data URL content")?;
 
                     if source.as_str()[..data_start].ends_with(";base64,") {
-                        let decoded = base64::decode_config(data, base64::URL_SAFE_NO_PAD)
-                            .wrap_err("Failed to decode base64 data url")?;
+                        let decoded =
+                            base64::decode_engine(data, &FastPortable::from(&URL_SAFE, NO_PAD))
+                                .wrap_err("Failed to decode base64 data url")?;
 
                         file.write_all(&decoded).wrap_err_with(|| {
                             format!(

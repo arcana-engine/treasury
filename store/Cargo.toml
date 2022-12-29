@@ -13,11 +13,11 @@ categories = ["game-development"]
 description = "Treasury storage"
 
 [dependencies]
-treasury-import = { version = "=0.3.0", path = "../import", default-features = false }
+treasury-import = { version = "=0.3.0", path = "../import", features = ["libloading"] }
 treasury-id = { version = "=0.1.0", path = "../id" }
 
 rand = "0.8"
-hashbrown = { version = "0.12", features = ["serde"] }
+hashbrown = { version = "0.13", features = ["serde"] }
 tinyvec = "1.0"
 smallvec = { version = "1.0", features = ["union", "serde"] }
 
@@ -31,7 +31,7 @@ serde_bytes = "0.11"
 toml = "0.5"
 envy = "0.4"
 
-base64 = "0.13"
+base64 = "0.20"
 
 tokio = { version = "1.0", features = ["macros", "net", "io-util", "rt-multi-thread", "time"] }
 futures-util = "0.3"

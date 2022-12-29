@@ -16,36 +16,36 @@ use serde::{
 use sha2::{Digest, Sha256};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct HashSha256 {
+pub struct Sha256Hash {
     bytes: [u8; 32],
 }
 
-impl Deref for HashSha256 {
+impl Deref for Sha256Hash {
     type Target = [u8; 32];
     fn deref(&self) -> &[u8; 32] {
         &self.bytes
     }
 }
 
-impl Borrow<[u8; 32]> for HashSha256 {
+impl Borrow<[u8; 32]> for Sha256Hash {
     fn borrow(&self) -> &[u8; 32] {
         &self.bytes
     }
 }
 
-impl Borrow<[u8]> for HashSha256 {
+impl Borrow<[u8]> for Sha256Hash {
     fn borrow(&self) -> &[u8] {
         &self.bytes
     }
 }
 
-impl Debug for HashSha256 {
+impl Debug for Sha256Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         LowerHex::fmt(self, f)
     }
 }
 
-impl LowerHex for HashSha256 {
+impl LowerHex for Sha256Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if f.alternate() {
             f.write_str("0x")?;
@@ -60,7 +60,7 @@ impl LowerHex for HashSha256 {
     }
 }
 
-impl UpperHex for HashSha256 {
+impl UpperHex for Sha256Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if f.alternate() {
             f.write_str("0X")?;
@@ -75,7 +75,7 @@ impl UpperHex for HashSha256 {
     }
 }
 
-impl FromStr for HashSha256 {
+impl FromStr for Sha256Hash {
     type Err = ParseIntError;
     fn from_str(s: &str) -> Result<Self, ParseIntError> {
         let mut bytes = [0; 32];
@@ -92,21 +92,21 @@ impl FromStr for HashSha256 {
             bytes[16..32].copy_from_slice(&lower.to_be_bytes());
         }
 
-        Ok(HashSha256 { bytes })
+        Ok(Sha256Hash { bytes })
     }
 }
 
-impl HashSha256 {
+impl Sha256Hash {
     pub fn new(data: impl AsRef<[u8]>) -> Self {
         let mut hasher = Sha256::new();
         hasher.update(data);
         let hash = hasher.finalize();
         let mut bytes = [0; 32];
         bytes.copy_from_slice(&hash);
-        HashSha256 { bytes }
+        Sha256Hash { bytes }
     }
 
-    pub fn file_hash(path: &Path) -> std::io::Result<HashSha256> {
+    pub fn file_hash(path: &Path) -> std::io::Result<Sha256Hash> {
         // Check for a duplicate.
         let mut hasher = Sha256::new();
 
@@ -115,11 +115,11 @@ impl HashSha256 {
 
         let mut bytes = [0u8; 32];
         bytes.copy_from_slice(&hasher.finalize());
-        Ok(HashSha256 { bytes })
+        Ok(Sha256Hash { bytes })
     }
 }
 
-impl Serialize for HashSha256 {
+impl Serialize for Sha256Hash {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -137,8 +137,8 @@ impl Serialize for HashSha256 {
     }
 }
 
-impl<'de> Deserialize<'de> for HashSha256 {
-    fn deserialize<D>(deserializer: D) -> Result<HashSha256, D::Error>
+impl<'de> Deserialize<'de> for Sha256Hash {
+    fn deserialize<D>(deserializer: D) -> Result<Sha256Hash, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -148,7 +148,7 @@ impl<'de> Deserialize<'de> for HashSha256 {
         } else {
             let bytes = serde_bytes::deserialize::<Cow<[u8]>, _>(deserializer)?;
             let bytes = TryFrom::try_from(bytes.as_ref()).map_err(Error::custom)?;
-            Ok(HashSha256 { bytes })
+            Ok(Sha256Hash { bytes })
         }
     }
 }

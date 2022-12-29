@@ -1,12 +1,7 @@
-use std::{borrow::Cow, fmt, path::Path};
+use std::path::Path;
 
 use hashbrown::{hash_map::RawEntryMut, HashMap};
-use treasury_id::AssetId;
-use treasury_import::{Dependencies, ImportError, Sources};
-
-use self::dylib::DylibImporter;
-
-mod dylib;
+use treasury_import::{loading::LoadingError, Importer};
 
 #[derive(Debug, thiserror::Error)]
 #[error("Multiple importers may import from different formats '{formats:?}' to target '{target}'")]
@@ -16,7 +11,7 @@ pub struct CannotDecideOnImporter {
 }
 
 struct ToTarget {
-    importers: Vec<Importer>,
+    importers: Vec<Box<dyn Importer>>,
     formats: HashMap<String, usize>,
     extensions: HashMap<String, usize>,
 }
@@ -33,15 +28,15 @@ impl Importers {
     }
 
     pub fn register_importer(&mut self, importer: impl treasury_import::Importer + 'static) {
-        self.add_importer(Importer::DynTraitImporter(Box::new(importer)));
+        self.add_importer(importer);
     }
 
     /// Loads importers from dylib.
     /// There is no possible way to guarantee that dylib does not break safety contracts.
     /// Some measures to ensure safety are taken.
     /// Providing dylib from which importers will be successfully imported and then cause an UB should possible only on purpose.
-    pub unsafe fn load_dylib_importers(&mut self, lib_path: &Path) -> eyre::Result<()> {
-        let iter = load_dylib_importers(lib_path)?;
+    pub unsafe fn load_dylib_importers(&mut self, lib_path: &Path) -> Result<(), LoadingError> {
+        let iter = treasury_import::loading::load_importers(lib_path)?;
 
         for importer in iter {
             self.add_importer(importer);
@@ -56,7 +51,7 @@ impl Importers {
         format: Option<&str>,
         extension: Option<&str>,
         target: &str,
-    ) -> Result<Option<&Importer>, CannotDecideOnImporter> {
+    ) -> Result<Option<&dyn Importer>, CannotDecideOnImporter> {
         tracing::debug!("Guessing importer to '{}'", target);
 
         let to_target = self.targets.get(target);
@@ -72,7 +67,7 @@ impl Importers {
                         0 => {
                             unreachable!()
                         }
-                        1 => Ok(Some(&to_target.importers[0])),
+                        1 => Ok(Some(&*to_target.importers[0])),
                         _ => {
                             tracing::debug!("Multiple importers to '{}' found", target);
                             Err(CannotDecideOnImporter {
@@ -83,18 +78,20 @@ impl Importers {
                     },
                     Some(extension) => match to_target.extensions.get(extension) {
                         None => Ok(None),
-                        Some(&idx) => Ok(Some(&to_target.importers[idx])),
+                        Some(&idx) => Ok(Some(&*to_target.importers[idx])),
                     },
                 },
                 Some(format) => match to_target.formats.get(format) {
                     None => Ok(None),
-                    Some(&idx) => Ok(Some(&to_target.importers[idx])),
+                    Some(&idx) => Ok(Some(&*to_target.importers[idx])),
                 },
             },
         }
     }
 
-    fn add_importer(&mut self, importer: Importer) {
+    fn add_importer(&mut self, importer: impl Importer + 'static) {
+        let importer = Box::new(importer);
+
         let name = importer.name();
         let target = importer.target();
         let formats = importer.formats();
@@ -170,126 +167,4 @@ impl Importers {
             }
         }
     }
-}
-
-/// Trait for an importer.
-pub trait DynImporter: Send + Sync {
-    fn name(&self) -> &str;
-
-    fn formats(&self) -> &[&str];
-
-    fn extensions(&self) -> &[&str];
-
-    fn target(&self) -> &str;
-
-    /// Reads data from `source` path and writes result at `output` path.
-    fn import(
-        &self,
-        source: &Path,
-        output: &Path,
-        sources: &mut dyn Sources,
-        dependencies: &mut dyn Dependencies,
-    ) -> Result<(), ImportError>;
-}
-
-impl<T> DynImporter for T
-where
-    T: treasury_import::Importer,
-{
-    fn name(&self) -> &str {
-        treasury_import::Importer::name(self)
-    }
-
-    fn formats(&self) -> &[&str] {
-        treasury_import::Importer::formats(self)
-    }
-
-    fn extensions(&self) -> &[&str] {
-        treasury_import::Importer::extensions(self)
-    }
-
-    fn target(&self) -> &str {
-        treasury_import::Importer::target(self)
-    }
-
-    fn import(
-        &self,
-        source: &Path,
-        output: &Path,
-        sources: &mut dyn Sources,
-        dependencies: &mut dyn Dependencies,
-    ) -> Result<(), ImportError> {
-        treasury_import::Importer::import(self, source, output, sources, dependencies)
-    }
-}
-
-pub enum Importer {
-    DynTraitImporter(Box<dyn DynImporter>),
-    DylibImporter(DylibImporter),
-}
-
-impl fmt::Debug for Importer {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Importer::DynTraitImporter(importer) => f.write_str(importer.name()),
-            Importer::DylibImporter(importer) => fmt::Debug::fmt(importer, f),
-        }
-    }
-}
-
-impl Importer {
-    pub fn import<'a, S, D>(
-        &self,
-        source: &Path,
-        output: &Path,
-        mut sources: S,
-        mut dependencies: D,
-    ) -> Result<(), ImportError>
-    where
-        S: FnMut(&str) -> Option<&'a Path> + 'a,
-        D: FnMut(&str, &str) -> Option<AssetId>,
-    {
-        match self {
-            Importer::DynTraitImporter(importer) => {
-                importer.import(source, output, &mut sources, &mut dependencies)
-            }
-            Importer::DylibImporter(importer) => {
-                importer.import(source, output, sources, dependencies)
-            }
-        }
-    }
-
-    pub fn name(&self) -> &str {
-        match self {
-            Importer::DynTraitImporter(importer) => importer.name(),
-            Importer::DylibImporter(importer) => importer.name(),
-        }
-    }
-
-    pub fn formats(&self) -> Cow<'_, [&str]> {
-        match self {
-            Importer::DynTraitImporter(importer) => importer.formats().into(),
-            Importer::DylibImporter(importer) => importer.formats().into(),
-        }
-    }
-
-    pub fn target(&self) -> &str {
-        match self {
-            Importer::DynTraitImporter(importer) => importer.target(),
-            Importer::DylibImporter(importer) => importer.target(),
-        }
-    }
-
-    pub fn extensions(&self) -> Cow<'_, [&str]> {
-        match self {
-            Importer::DynTraitImporter(importer) => importer.extensions().into(),
-            Importer::DylibImporter(importer) => importer.extensions().into(),
-        }
-    }
-}
-
-unsafe fn load_dylib_importers(
-    lib_path: &Path,
-) -> eyre::Result<impl Iterator<Item = Importer> + '_> {
-    Ok(dylib::load_importers(lib_path)?.map(Importer::DylibImporter))
 }
