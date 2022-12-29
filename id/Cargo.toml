@@ -2,7 +2,7 @@
 name = "treasury-id"
 version = "0.1.0"
 edition = "2021"
-authors = ["Zakarum <zakarumych@ya.ru>"]
+authors = ["Zakarum <zaq.dev@icloud.com>"]
 license = "MIT OR Apache-2.0"
 documentation = "https://docs.rs/treasury-id"
 homepage = "https://github.com/zakarumych/treasury"
